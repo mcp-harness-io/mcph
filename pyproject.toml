@@ -1,0 +1,19 @@
+[project]
+name = "mcph"
+version = "0.0.1"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Libor Krzyzanek", email = "libor.krzyzanek@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15.0",
+]
+
+[project.scripts]
+mcph = "mcph.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
