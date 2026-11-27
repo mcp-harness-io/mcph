@@ -21,6 +21,7 @@ from mcph.rules import (
     Finding,
     Outcome,
     Rule,
+    RuleInfo,
     RuleResult,
     Severity,
     apply_rule_settings,
@@ -203,6 +204,42 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
     lines.append("")
     lines.append(summary + ".")
     return "\n".join(lines)
+
+
+def format_rules(
+    rules: Iterable[RuleInfo],
+    settings: Mapping[str, str],
+    *,
+    config_path: Path | None,
+) -> str:
+    """Render the rules with the setting that applies to each.
+
+    ``settings`` is the ``doctor.rules`` section of the config; a rule that is not
+    in it has its default severity. ``config_path`` is the file the settings come
+    from, or ``None`` if there is none.
+    """
+    if config_path is not None:
+        source = f"settings from {config_path}"
+    else:
+        source = "default settings: no mcph.yaml in the current directory"
+    rows = [
+        (rule.id, _setting_text(rule, settings), rule.description) for rule in rules
+    ]
+    id_width = max((len(rule_id) for rule_id, _, _ in rows), default=0)
+    setting_width = max((len(setting) for _, setting, _ in rows), default=0)
+    lines = [f"Rules ({source})", ""]
+    lines.extend(
+        f"  {rule_id:<{id_width}}  {setting:<{setting_width}}  {description}".rstrip()
+        for rule_id, setting, description in rows
+    )
+    return "\n".join(lines)
+
+
+def _setting_text(rule: RuleInfo, settings: Mapping[str, str]) -> str:
+    """``warn``, or ``error (default: warn)`` when the config changed the default."""
+    default = rule.severity.value
+    setting = settings.get(rule.id, default)
+    return setting if setting == default else f"{setting} (default: {default})"
 
 
 def _describe(snapshot: ServerSnapshot) -> str:
