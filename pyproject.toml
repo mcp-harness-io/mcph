@@ -28,4 +28,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=mcph --cov-report=term-missing"
+addopts = "--cov=mcph --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+relative_files = true
