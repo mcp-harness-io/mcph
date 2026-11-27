@@ -1,10 +1,10 @@
 .DEFAULT_GOAL := help
-.PHONY: help install test build clean
+.PHONY: help setup test build clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-10s %s\n", $$1, $$2}'
 
-install: ## Install dependencies (including dev group)
+setup: ## Install dependencies (including dev group)
 	uv sync
 
 test: ## Run the test suite with coverage
