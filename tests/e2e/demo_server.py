@@ -10,6 +10,7 @@ E2E_FAIL_ON_START  if set, print an error to stderr and exit before serving
 E2E_STARTUP_DELAY  seconds to sleep before serving
 E2E_TRANSPORT      "http" to serve Streamable HTTP on 127.0.0.1:$E2E_PORT (default: stdio)
 E2E_PORT           port for the http transport
+E2E_AUTH           if set (http only), require a bearer token like an OAuth-protected server
 """
 
 import os
@@ -29,7 +30,23 @@ if os.environ.get("E2E_FAIL_ON_START"):
 
 time.sleep(float(os.environ.get("E2E_STARTUP_DELAY", "0")))
 
-mcp = FastMCP("e2e-server", version=os.environ.get("E2E_VERSION", "9.9.9"))
+auth = None
+if os.environ.get("E2E_AUTH"):
+    from fastmcp.server.auth import RemoteAuthProvider
+    from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+    from pydantic import AnyHttpUrl
+
+    # Unauthenticated requests get a 401 pointing at the protected resource metadata.
+    auth = RemoteAuthProvider(
+        token_verifier=StaticTokenVerifier(
+            tokens={"e2e-secret-token": {"client_id": "e2e", "scopes": ["api.read"]}}
+        ),
+        authorization_servers=[AnyHttpUrl("https://auth.example.test")],
+        base_url=f"http://127.0.0.1:{os.environ['E2E_PORT']}",
+        scopes_supported=["api.read", "api.write"],
+    )
+
+mcp = FastMCP("e2e-server", version=os.environ.get("E2E_VERSION", "9.9.9"), auth=auth)
 
 
 def register(tool_name: str) -> None:

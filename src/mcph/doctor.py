@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcph.auth_probe import AuthInfo
 from mcph.config import Config
 from mcph.mcp_client import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -99,6 +100,10 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
             lines.extend(_finding_line(finding) for finding in server.findings)
         elif server.error is not None:
             lines.append(_status("ERROR", server.error.message))
+            if server.error.auth is not None:
+                lines.extend(
+                    _continuation(line) for line in _auth_lines(server.error.auth)
+                )
             if server.error.stderr_tail:
                 lines.append(_continuation("server stderr:"))
                 lines.extend(
@@ -130,6 +135,26 @@ def _describe(snapshot: ServerSnapshot) -> str:
     if details:
         text += f" ({', '.join(details)})"
     return f"{text}, {_plural(len(snapshot.tools), 'tool')}"
+
+
+def _auth_lines(auth: AuthInfo) -> list[str]:
+    """Describe what an HTTP server that answered 401 says about its auth."""
+    if auth.challenge:
+        lines = [f"challenge: {auth.challenge}"]
+    else:
+        lines = ["challenge: none (the 401 had no WWW-Authenticate header)"]
+    if auth.metadata_url is None:
+        return [*lines, "no OAuth protected resource metadata found"]
+
+    if not auth.challenge or auth.metadata_url not in auth.challenge:
+        lines.append(f"metadata: {auth.metadata_url}")  # found at a well-known URL
+    servers = auth.authorization_servers
+    if servers:
+        label = "authorization servers" if len(servers) > 1 else "authorization server"
+        lines.append(f"{label}: {', '.join(servers)}")
+    if auth.scopes:
+        lines.append(f"scopes: {', '.join(auth.scopes)}")
+    return lines
 
 
 def _finding_line(finding: Finding) -> str:

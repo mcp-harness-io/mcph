@@ -709,6 +709,7 @@ version = "0.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp-slim", extra = ["client"] },
+    { name = "httpx2" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "typer" },
@@ -724,6 +725,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], specifier = ">=4.2,<5" },
+    { name = "httpx2", specifier = ">=2.10.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "typer", specifier = ">=0.16.0" },
