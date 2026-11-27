@@ -36,7 +36,7 @@ servers:
 Then check them:
 
 ```console
-$ mcph doctor
+$ mcph doctor run
 Checking 2 servers from /path/to/mcph.yaml
 
 orders
@@ -64,15 +64,17 @@ See [Configuring rules](#configuring-rules) for the details.
 
 | Command | What it does |
 |---|---|
-| `mcph doctor` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports what each rule found. |
+| `mcph doctor run` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports what each rule found. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
 
-- `-c, --config PATH` selects the config file (default `./mcph.yaml`). It goes before the command: `mcph -c other.yaml doctor`.
-- `mcph doctor --timeout SECONDS` limits how long each server may take to start and answer (default 30).
-- `mcph doctor --strict` also fails on warnings, which is handy in CI.
-- `mcph doctor` exits with `0` if all servers are OK, `1` if a server failed (or, with `--strict`, if there are warnings), `2` if the config is invalid.
+`mcph doctor` is a group of commands: on its own it is an error, so a script that still calls it fails instead of passing without checking anything. `mcph doctor --help` lists its commands.
+
+- `-c, --config PATH` selects the config file (default `./mcph.yaml`). It goes before the command: `mcph -c other.yaml doctor run`.
+- `mcph doctor run --timeout SECONDS` limits how long each server may take to start and answer (default 30).
+- `mcph doctor run --strict` also fails on warnings, which is handy in CI.
+- `mcph doctor run` exits with `0` if all servers are OK, `1` if a server failed (or, with `--strict`, if there are warnings), `2` if the config is invalid.
 
 If an `http` server refuses mcph, doctor says why instead of a generic error: no token was sent (401), the token was rejected (with the server's `error`, its explanation and the scope it asks for), or the token lacks a scope (403). It also shows what the server announces about its OAuth setup when it publishes protected resource metadata (RFC 9728): its authorization server and scopes.
 
@@ -112,7 +114,7 @@ Opening your browser. If it does not open, visit:
 Logged in to docs; the token expires in 15 min.
 ```
 
-`mcph doctor` then uses the stored token. It is an access token that usually expires after a few minutes; when it has, doctor tells you to log in again. `mcph auth status` shows who is logged in and when each token expires, and `mcph auth logout docs` deletes the token. For CI use a bearer token from an environment variable instead.
+`mcph doctor run` then uses the stored token. It is an access token that usually expires after a few minutes; when it has, doctor tells you to log in again. `mcph auth status` shows who is logged in and when each token expires, and `mcph auth logout docs` deletes the token. For CI use a bearer token from an environment variable instead.
 
 Tokens are kept in a file only you can read, under mcph's state directory (set `MCPH_STATE_DIR` to put it elsewhere). mcph does not keep refresh tokens.
 
@@ -120,7 +122,7 @@ If login stops with `Authorization server metadata issuer mismatch`, the server 
 
 ## Rules
 
-`mcph doctor` checks every server that starts against these built-in rules:
+`mcph doctor run` checks every server that starts against these built-in rules:
 
 | Rule | Severity | Checks |
 |---|---|---|

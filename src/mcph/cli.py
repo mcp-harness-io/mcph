@@ -56,8 +56,14 @@ def version() -> None:
     typer.echo(f"mcph {__version__}")
 
 
-@app.command()
-def doctor(
+# Not no_args_is_help: with click < 8.2 that exits with 0, and a CI job that still
+# calls a bare `mcph doctor` must fail instead of passing without checking anything.
+doctor_app = typer.Typer(help="Check the MCP servers in mcph.yaml.")
+app.add_typer(doctor_app, name="doctor")
+
+
+@doctor_app.command()
+def run(
     ctx: typer.Context,
     timeout: Annotated[
         float,
@@ -110,7 +116,7 @@ def login(
 ) -> None:
     """Sign in to an OAuth server through the browser and store its token.
 
-    The token is kept in a file only you can read, and `mcph doctor` uses it.
+    The token is kept in a file only you can read, and `mcph doctor run` uses it.
     It usually expires after a few minutes; run this again when it does.
     """
     target = _oauth_server_or_exit(ctx, server)
