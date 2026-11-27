@@ -241,11 +241,11 @@ def _oauth_server_or_exit(ctx: typer.Context, name: str) -> HttpServerConfig:
 
 @app.command()
 def proxy() -> None:
-    """Transparent stdio/HTTP proxy to record real MCP client traffic."""
-    typer.echo("proxy: coming in v0.1.0")
+    """Transparent stdio/HTTP proxy to record real MCP client traffic (coming in 0.3.0)."""
+    typer.echo("proxy: coming in 0.3.0")
 
 
 @app.command()
 def eval() -> None:
-    """Execute mcpchecker task suites and score traces with an LLM judge."""
-    typer.echo("eval: coming in v0.1.0")
+    """Execute mcpchecker task suites and score traces with an LLM judge (coming in 0.4.0)."""
+    typer.echo("eval: coming in 0.4.0")

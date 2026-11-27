@@ -24,11 +24,18 @@ def test_version_prints_installed_version():
     assert result.output.strip() == f"mcph {__version__}"
 
 
-@pytest.mark.parametrize("command", ["proxy", "eval"])
-def test_placeholder_commands(command):
+@pytest.mark.parametrize(("command", "release"), [("proxy", "0.3.0"), ("eval", "0.4.0")])
+def test_placeholder_commands_say_in_which_release_they_are_coming(command, release):
     result = runner.invoke(app, [command])
     assert result.exit_code == 0
-    assert result.output.strip() == f"{command}: coming in v0.1.0"
+    assert result.output.strip() == f"{command}: coming in {release}"
+
+
+def test_help_says_in_which_release_the_placeholders_are_coming():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "0.3.0" in plain(result.output)
+    assert "0.4.0" in plain(result.output)
 
 
 def test_no_args_shows_help():
