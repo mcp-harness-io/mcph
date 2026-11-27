@@ -7,9 +7,10 @@
 | src/mcph/\_\_init\_\_.py |        1 |        0 |     100% |           |
 | src/mcph/cli.py          |       36 |        0 |     100% |           |
 | src/mcph/config.py       |       99 |        0 |     100% |           |
-| src/mcph/doctor.py       |       62 |        0 |     100% |           |
+| src/mcph/doctor.py       |       82 |        0 |     100% |           |
 | src/mcph/mcp\_client.py  |       49 |        0 |     100% |           |
-| **TOTAL**                |  **247** |    **0** | **100%** |           |
+| src/mcph/rules.py        |       39 |        0 |     100% |           |
+| **TOTAL**                |  **306** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
