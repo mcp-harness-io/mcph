@@ -3,6 +3,8 @@ name = "mcph"
 version = "0.0.2"
 description = "Add your description here"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Libor Krzyzanek", email = "libor.krzyzanek@gmail.com" }
 ]
