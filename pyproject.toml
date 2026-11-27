@@ -1,7 +1,7 @@
 [project]
 name = "mcph"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP Harness: diagnostics, real-client proxy and LLM-as-a-judge evals for MCP servers."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
