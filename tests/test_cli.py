@@ -15,7 +15,7 @@ def test_version_prints_installed_version():
     assert result.output.strip() == f"mcph {__version__}"
 
 
-@pytest.mark.parametrize("command", ["doctor", "proxy", "eval"])
+@pytest.mark.parametrize("command", ["proxy", "eval"])
 def test_placeholder_commands(command):
     result = runner.invoke(app, [command])
     assert result.exit_code == 0
@@ -35,6 +35,7 @@ def test_help_lists_all_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "MCP Harness" in result.output
+    assert "--config" in result.output
     for command in COMMANDS:
         assert command in result.output
 

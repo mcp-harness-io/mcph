@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from mcph.config import Config, ConfigError, load_config
+from mcph.config import Config, ConfigError, ServerConfig, load_config
 
 
 def write(tmp_path: Path, text: str, name: str = "mcph.yaml") -> Path:
@@ -114,6 +114,19 @@ def test_primary_server_defaults_to_the_first(tmp_path):
 
 
 # --- locating the file ------------------------------------------------------
+
+
+def test_path_is_the_absolute_path_of_the_config_file(tmp_path):
+    path = write(tmp_path, MINIMAL)
+
+    assert load_config(path).path == path
+
+
+def test_config_built_in_code_has_no_path():
+    config = Config(servers=[ServerConfig(name="a", transport="stdio", command="x")])
+
+    assert config.path is None
+    assert config.base_dir == Path.cwd()
 
 
 def test_base_dir_is_the_directory_of_the_config_file(tmp_path):
