@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 from mcph import doctor
+from mcph.auth_probe import AuthInfo
 from mcph.config import Config, StdioServerConfig
 from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
@@ -245,3 +246,77 @@ def test_http_servers_are_connected_to_not_started():
 
     assert "  OK     connected in 87 ms (orders-server 1.2.3, MCP 2026-07-28), 2 tools" in text
     assert "started" not in text
+
+
+AUTH_MESSAGE = (
+    "authentication required: the server answered 401 (mcph cannot send credentials yet)"
+)
+
+
+def auth_report(**auth) -> DoctorReport:
+    error = ServerError(AUTH_MESSAGE, auth=AuthInfo(**auth))
+    return DoctorReport((ServerReport("docs", error=error),))
+
+
+def test_a_server_that_requires_auth_is_explained():
+    challenge = 'Bearer resource_metadata="http://h/prm"'
+    report = auth_report(
+        challenge=challenge,
+        metadata_url="http://h/prm",
+        authorization_servers=("https://auth.example.com/",),
+        scopes=("api.read", "api.write"),
+    )
+
+    assert format_report(report) == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "docs",
+            f"  ERROR  {AUTH_MESSAGE}",
+            f"         challenge: {challenge}",
+            "         authorization server: https://auth.example.com/",
+            "         scopes: api.read, api.write",
+            "",
+            "1 of 1 server failed.",
+        ]
+    )
+
+
+def test_several_authorization_servers_are_listed_with_a_plural_label():
+    report = auth_report(
+        challenge='Bearer resource_metadata="http://h/prm"',
+        metadata_url="http://h/prm",
+        authorization_servers=("https://a/", "https://b/"),
+    )
+
+    text = format_report(report)
+
+    assert "         authorization servers: https://a/, https://b/" in text
+    assert "scopes:" not in text
+
+
+def test_metadata_found_at_a_well_known_url_names_that_url():
+    report = auth_report(
+        challenge='Bearer realm="mcp"',
+        metadata_url="http://h/.well-known/oauth-protected-resource/mcp",
+        authorization_servers=("https://a/",),
+    )
+
+    text = format_report(report)
+
+    assert '         challenge: Bearer realm="mcp"' in text
+    assert "         metadata: http://h/.well-known/oauth-protected-resource/mcp" in text
+
+
+def test_a_401_without_metadata_says_so():
+    text = format_report(auth_report(challenge='Bearer realm="demo"'))
+
+    assert '         challenge: Bearer realm="demo"' in text
+    assert "         no OAuth protected resource metadata found" in text
+
+
+def test_a_401_without_a_challenge_header_says_so():
+    text = format_report(auth_report(challenge=None))
+
+    assert "         challenge: none (the 401 had no WWW-Authenticate header)" in text
+    assert "no OAuth protected resource metadata found" in text

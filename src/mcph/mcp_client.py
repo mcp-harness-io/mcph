@@ -19,6 +19,7 @@ from fastmcp.client.transports import (
     StreamableHttpTransport,
 )
 
+from mcph.auth_probe import AuthInfo, probe_auth
 from mcph.config import HttpServerConfig, ServerConfig, StdioServerConfig
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -54,10 +55,20 @@ class ServerSnapshot:
 class ServerError(Exception):
     """A server could not be reached, did not answer, or failed to list tools."""
 
-    def __init__(self, message: str, stderr_tail: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        stderr_tail: str = "",
+        *,
+        auth: AuthInfo | None = None,
+        timed_out: bool = False,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.stderr_tail = stderr_tail
+        self.auth = auth
+        """Set when the server answered 401: what it says about the auth it needs."""
+        self.timed_out = timed_out
 
 
 async def snapshot_server(
@@ -117,14 +128,28 @@ async def snapshot_http_server(
 
     mcph does not start or stop the server. Raises :class:`ServerError` if it
     cannot be reached, does not answer within ``timeout`` seconds, or fails
-    while being queried; the message names the URL.
+    while being queried; the message names the URL. If the server answers 401,
+    the error says authentication is required and carries what the server
+    advertises about it (:attr:`ServerError.auth`).
     """
-    return await _snapshot(
-        StreamableHttpTransport(url=server.url),
-        kind="http",
-        connecting=f"connecting to {server.url}",
-        timeout=timeout,
-    )
+    try:
+        return await _snapshot(
+            StreamableHttpTransport(url=server.url),
+            kind="http",
+            connecting=f"connecting to {server.url}",
+            timeout=timeout,
+        )
+    except ServerError as error:
+        if error.timed_out:
+            raise
+        auth = await probe_auth(server.url, timeout=timeout)
+        if auth is None:
+            raise
+        raise ServerError(
+            "authentication required: the server answered 401 "
+            "(mcph cannot send credentials yet)",
+            auth=auth,
+        ) from error
 
 
 async def _snapshot(
@@ -149,6 +174,7 @@ async def _snapshot(
         raise ServerError(
             f"timed out after {timeout:g} s while {phase}",
             _stderr_tail(stderr_path),
+            timed_out=True,
         ) from None
     except Exception as exc:
         raise ServerError(

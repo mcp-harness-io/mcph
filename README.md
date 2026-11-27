@@ -58,6 +58,16 @@ All servers OK, 1 warning.
 - `mcph doctor --strict` also fails on warnings, which is handy in CI.
 - `mcph doctor` exits with `0` if all servers are OK, `1` if a server failed (or, with `--strict`, if there are warnings), `2` if the config is invalid.
 
+If an `http` server answers 401, doctor says that authentication is required and shows what the server announces: its `WWW-Authenticate` challenge and, when it publishes OAuth protected resource metadata (RFC 9728), its authorization server and scopes. mcph cannot send credentials yet, so such a server still fails the check.
+
+```console
+docs
+  ERROR  authentication required: the server answered 401 (mcph cannot send credentials yet)
+         challenge: Bearer resource_metadata="http://localhost:8080/.well-known/oauth-protected-resource/mcp"
+         authorization server: https://auth.example.com/
+         scopes: api.read, api.write
+```
+
 ## Rules
 
 `mcph doctor` checks every server that starts against these built-in rules:
@@ -75,7 +85,7 @@ Warnings do not fail the run unless you pass `--strict`.
   - `name`: unique; letters, digits, `_` and `-`.
   - `transport`: `stdio` or `http`.
   - `command`, `args`, `env` (`stdio`): how to start the server.
-  - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it, and it cannot send credentials yet, so a server that requires authentication fails the check.
+  - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it, and it cannot send credentials yet.
   - `primary`: optional `true` for the server you are developing (at most one).
 
 `stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.

@@ -3,7 +3,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -155,3 +157,30 @@ def silent_server_url():
         sock.bind(("127.0.0.1", 0))
         sock.listen()
         yield f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"
+
+
+@pytest.fixture
+def plain_401_server_url():
+    """URL of a server that answers every request with 401 and no OAuth metadata."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def respond(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="demo"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = do_POST = respond
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/mcp"
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
