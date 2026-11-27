@@ -8,18 +8,18 @@
 | src/mcph/auth\_probe.py                           |       81 |        0 |     100% |           |
 | src/mcph/cli.py                                   |      110 |        0 |     100% |           |
 | src/mcph/config.py                                |      194 |        0 |     100% |           |
-| src/mcph/doctor.py                                |      175 |        0 |     100% |           |
+| src/mcph/doctor.py                                |      154 |        0 |     100% |           |
 | src/mcph/mcp\_client.py                           |      128 |        0 |     100% |           |
-| src/mcph/oauth\_audit.py                          |       83 |        0 |     100% |           |
+| src/mcph/oauth\_audit.py                          |       72 |        0 |     100% |           |
 | src/mcph/oauth\_login.py                          |       83 |        0 |     100% |           |
-| src/mcph/rules/\_\_init\_\_.py                    |        6 |        0 |     100% |           |
-| src/mcph/rules/base.py                            |       42 |        0 |     100% |           |
-| src/mcph/rules/builtin/\_\_init\_\_.py            |        5 |        0 |     100% |           |
-| src/mcph/rules/builtin/oauth.py                   |        7 |        0 |     100% |           |
+| src/mcph/rules/\_\_init\_\_.py                    |        3 |        0 |     100% |           |
+| src/mcph/rules/base.py                            |       84 |        0 |     100% |           |
+| src/mcph/rules/builtin/\_\_init\_\_.py            |        7 |        0 |     100% |           |
+| src/mcph/rules/builtin/oauth.py                   |       43 |        0 |     100% |           |
 | src/mcph/rules/builtin/tool\_name\_snake\_case.py |       21 |        0 |     100% |           |
 | src/mcph/rules/settings.py                        |       15 |        0 |     100% |           |
 | src/mcph/token\_store.py                          |       85 |        0 |     100% |           |
-| **TOTAL**                                         | **1036** |    **0** | **100%** |           |
+| **TOTAL**                                         | **1081** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
