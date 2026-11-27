@@ -4,6 +4,7 @@ import pytest
 from fastmcp.client.auth.oauth import TokenStorageAdapter
 from mcp.shared.auth import OAuthToken
 
+from mcph import mcp_client
 from mcph.auth_probe import AuthInfo
 from mcph.config import BearerAuthConfig, HttpServerConfig, OAuthAuthConfig
 from mcph.mcp_client import (
@@ -12,6 +13,7 @@ from mcph.mcp_client import (
     _read_token,
     _redact,
     _resolve_token,
+    snapshot_http_server,
 )
 from mcph.token_store import TokenStore
 
@@ -204,4 +206,63 @@ def test_a_stored_token_without_the_needed_scope_says_to_add_it():
         "the stored token lacks a scope the server requires "
         "(add it to `scopes`, then run `mcph auth login docs` again)"
     )
+
+
+# --- a server we cannot log in to yet asks the server what it needs ----------------------------
+
+
+def asked_server(monkeypatch, answer: AuthInfo | None) -> list[dict]:
+    calls = []
+
+    async def fake_probe(url, *, timeout, token=None):
+        calls.append({"url": url, "timeout": timeout, "token": token})
+        return answer
+
+    monkeypatch.setattr(mcp_client, "probe_auth", fake_probe)
+    return calls
+
+
+def test_without_a_login_the_server_is_asked_what_it_needs(tmp_path, monkeypatch):
+    answer = AuthInfo(challenge='Bearer realm="x"', authorization_servers=("https://as/",))
+    calls = asked_server(monkeypatch, answer)
+
+    with pytest.raises(ServerError) as excinfo:
+        asyncio.run(snapshot_http_server(oauth_server(), timeout=7, store=TokenStore(tmp_path)))
+
+    assert excinfo.value.message == "not logged in (run `mcph auth login docs`)"
+    assert excinfo.value.auth is answer
+    assert calls == [{"url": "http://x/mcp", "timeout": 7, "token": None}]  # no credentials
+
+
+def test_a_server_that_does_not_need_auth_adds_nothing(tmp_path, monkeypatch):
+    asked_server(monkeypatch, None)
+
+    with pytest.raises(ServerError) as excinfo:
+        asyncio.run(snapshot_http_server(oauth_server(), timeout=7, store=TokenStore(tmp_path)))
+
+    assert excinfo.value.auth is None
+
+
+def test_an_expired_login_asks_too(tmp_path, monkeypatch):
+    store = TokenStore(tmp_path)
+    store_token(store, expires_in=1)
+    asyncio.run(asyncio.sleep(1.2))
+    calls = asked_server(monkeypatch, AuthInfo(challenge=None))
+
+    with pytest.raises(ServerError) as excinfo:
+        asyncio.run(snapshot_http_server(oauth_server(), timeout=7, store=store))
+
+    assert excinfo.value.message.startswith("the stored token expired")
+    assert excinfo.value.auth is not None and len(calls) == 1
+
+
+def test_a_missing_bearer_token_variable_does_not_ask(monkeypatch):
+    monkeypatch.delenv("DOCS_TOKEN", raising=False)
+    calls = asked_server(monkeypatch, AuthInfo(challenge=None))
+
+    with pytest.raises(ServerError, match="is not set") as excinfo:
+        asyncio.run(snapshot_http_server(http_server(), timeout=7))
+
+    assert excinfo.value.auth is None
+    assert calls == []
 

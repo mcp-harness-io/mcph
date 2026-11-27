@@ -70,7 +70,7 @@ elif os.environ.get("E2E_AUTH"):
             ]
             or None,
         ),
-        authorization_servers=[AnyHttpUrl("https://auth.example.test")],
+        authorization_servers=[AnyHttpUrl(f"http://127.0.0.1:{os.environ['E2E_PORT']}")],
         base_url=f"http://127.0.0.1:{os.environ['E2E_PORT']}",
         scopes_supported=["api.read", "api.write"],
     )
