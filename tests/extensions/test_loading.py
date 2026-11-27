@@ -1,7 +1,7 @@
 import pytest
 
 from mcph.config import Config, ConfigError, DoctorConfig, StdioServerConfig, load_config
-from mcph.extensions import load_extensions
+from mcph.extensions import load_extensions, load_packs
 
 CORE_IDS = [
     "core.tool_name_snake_case",
@@ -168,3 +168,22 @@ def test_a_config_built_in_code_has_no_file_to_name():
     )
 
     assert error_for(config).startswith("Invalid config:\n  doctor.rules: unknown rule ")
+
+
+def test_load_packs_does_not_look_at_the_settings(tmp_path):
+    config = config_with(
+        tmp_path, "extends:\n  - builtin:core\ndoctor:\n  rules:\n    zzz: warn\n"
+    )
+
+    registry = load_packs(config)  # load_extensions would reject the unknown rule
+
+    assert [pack.manifest.name for pack in registry.packs] == ["core"]
+    with pytest.raises(ConfigError, match="unknown rule 'zzz'"):
+        load_extensions(config)
+
+
+def test_load_packs_reports_a_pack_that_cannot_be_loaded_as_a_config_error(tmp_path):
+    config = config_with(tmp_path, "extends:\n  - ./packs/missing\n")
+
+    with pytest.raises(ConfigError, match="pack directory not found"):
+        load_packs(config)

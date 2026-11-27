@@ -23,7 +23,7 @@ import hashlib
 import importlib.util
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -105,35 +105,77 @@ class LoadedPack:
 def load_pack(resolved: ResolvedPack) -> LoadedPack:
     """Read the manifest of a resolved pack and import the files that define its rules.
 
-    Raises :class:`PackError` if the manifest is invalid, a listed file is missing,
-    fails to import or defines no rule, or two rules have the same id.
+    Raises :class:`PackError` with the first problem: an invalid manifest, a listed
+    file that is missing, fails to import or defines no rule, or two rules with the
+    same id. The files after the one with the problem are not imported.
     """
     manifest = load_manifest(resolved.directory)
+    defined: dict[str, tuple[Rule, str]] = {}
+    problems = _check_files(manifest, resolved.directory, defined)
+    first = next(problems, None)  # None only once every file has been checked
+    if first is not None:
+        raise PackError(first)
+    return LoadedPack(manifest, resolved.source, resolved.directory, _rules(defined))
+
+
+@dataclass(frozen=True)
+class PackReport:
+    """What checking a pack directory found."""
+
+    pack: LoadedPack | None
+    """The pack with the rules that could be loaded; ``None`` if the manifest is unusable."""
+    problems: tuple[str, ...]
+    """One message for each problem; none means the pack is valid."""
+
+
+def verify_pack(directory: Path) -> PackReport:
+    """Check the pack in ``directory`` and report every problem, not just the first.
+
+    This imports the rule files of the pack, so it runs the Python of the pack.
+    """
+    try:
+        manifest = load_manifest(directory)
+    except PackError as exc:
+        return PackReport(None, (str(exc),))
+    defined: dict[str, tuple[Rule, str]] = {}
+    problems = tuple(_check_files(manifest, directory, defined))
+    pack = LoadedPack(manifest, str(directory), directory, _rules(defined))
+    return PackReport(pack, problems)
+
+
+def _check_files(
+    manifest: PackManifest, directory: Path, defined: dict[str, tuple[Rule, str]]
+) -> Iterator[str]:
+    """Import the rule files of a pack in order and yield a message for each problem.
+
+    The rules found are added to ``defined`` (rule id -> rule and file) as it goes.
+    """
     name = manifest.name
-    defined: dict[str, tuple[Rule, str]] = {}  # rule id -> (rule, file)
     for file in manifest.rules:
-        path = resolved.directory / file
+        path = directory / file
         if not path.is_file():
-            raise PackError(
-                f"pack {name!r}: {file}, listed under rules in {MANIFEST_NAME}, does not exist"
-            )
-        found = _rules_of(_import(name, path))
+            yield f"pack {name!r}: {file}, listed under rules in {MANIFEST_NAME}, does not exist"
+            continue
+        try:
+            found = _rules_of(_import(name, path))
+        except PackError as exc:
+            yield str(exc)
+            continue
         if not found:
-            raise PackError(
-                f"pack {name!r}: {file} defines no rule "
-                "(mark each rule function with @doctor_rule)"
-            )
+            yield f"pack {name!r}: {file} defines no rule (mark each rule function with @doctor_rule)"
         for rule in found:
             earlier = defined.get(rule.id)
             if earlier is None:
                 defined[rule.id] = (rule, file)
             elif earlier[0] is not rule:  # the same function reached twice is fine
-                raise PackError(
+                yield (
                     f"pack {name!r}: the rule id {rule.id!r} is defined in "
                     f"{earlier[1]} and in {file}"
                 )
-    rules = tuple(rule for rule, _ in defined.values())
-    return LoadedPack(manifest, resolved.source, resolved.directory, rules)
+
+
+def _rules(defined: dict[str, tuple[Rule, str]]) -> tuple[Rule, ...]:
+    return tuple(rule for rule, _ in defined.values())
 
 
 def _import(pack: str, path: Path) -> ModuleType:

@@ -15,19 +15,25 @@ ADD_A_PACK = (
 )
 
 
-def load_extensions(config: Config) -> Registry:
+def load_packs(config: Config) -> Registry:
     """Load the packs named by ``extends`` in the config.
 
-    Relative directories are taken from the directory of the config file. The
-    ``doctor.rules`` settings are checked against the rules of the loaded packs.
-    Raises :class:`~mcph.config.ConfigError` if a pack cannot be loaded or a setting
-    names a rule that no loaded pack defines.
+    Relative directories are taken from the directory of the config file. Raises
+    :class:`~mcph.config.ConfigError` if a pack cannot be loaded.
     """
     try:
-        registry = load_registry(config.extends, config.base_dir)
+        return load_registry(config.extends, config.base_dir)
     except PackError as exc:
         raise ConfigError(str(exc)) from exc
 
+
+def load_extensions(config: Config) -> Registry:
+    """Load the packs of the config, and check the ``doctor.rules`` settings against them.
+
+    Raises :class:`~mcph.config.ConfigError` if a pack cannot be loaded or a setting
+    names a rule that no loaded pack defines.
+    """
+    registry = load_packs(config)
     known = [rule.id for rule in registry.rules]
     unknown = [rule_id for rule_id in config.doctor.rules if rule_id not in known]
     if unknown:
