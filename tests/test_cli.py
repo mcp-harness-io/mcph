@@ -53,3 +53,28 @@ def test_help_lists_all_commands():
 def test_unknown_command_fails():
     result = runner.invoke(app, ["nope"])
     assert result.exit_code == 2
+
+
+def test_doctor_is_a_group_and_its_run_command_has_the_options():
+    group = runner.invoke(app, ["doctor", "--help"])
+    run = runner.invoke(app, ["doctor", "run", "--help"])
+
+    assert group.exit_code == 0 and run.exit_code == 0
+    assert re.search(r"\brun\b", plain(group.output))
+    assert "--timeout" in plain(run.output)
+    assert "--strict" in plain(run.output)
+
+
+def test_a_bare_doctor_fails_so_that_an_old_script_does_not_pass_without_checking():
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 2
+    assert "Missing command" in plain(result.output)
+
+
+@pytest.mark.parametrize("option", [["--strict"], ["--timeout", "5"]])
+def test_the_doctor_options_moved_to_run(option):
+    result = runner.invoke(app, ["doctor", *option])
+
+    assert result.exit_code == 2
+    assert "No such option" in plain(result.output)

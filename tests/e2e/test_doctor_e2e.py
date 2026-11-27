@@ -140,7 +140,7 @@ def test_default_config_is_mcph_yaml_in_the_working_directory(project, monkeypat
     project.write_config(project.demo_server("orders"))
     monkeypatch.chdir(project.root)
 
-    result = CliRunner().invoke(app, ["doctor"])
+    result = CliRunner().invoke(app, ["doctor", "run"])
 
     assert result.exit_code == 0, result.output
     assert re.search(r"orders\n +OK +started in", result.output)
@@ -155,7 +155,7 @@ def test_installed_command_exits_with_the_doctor_status(project):
     project.write_config(project.demo_server("orders"), broken)
 
     completed = subprocess.run(
-        [str(script), "-c", str(project.config_path), "doctor"],
+        [str(script), "-c", str(project.config_path), "doctor", "run"],
         capture_output=True,
         text=True,
         timeout=60,

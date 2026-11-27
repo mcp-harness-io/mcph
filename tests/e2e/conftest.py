@@ -89,7 +89,7 @@ class Project:
         return CliRunner().invoke(app, ["-c", str(self.config_path), *args])
 
     def doctor(self, *args: str):
-        return self.mcph("doctor", *args)
+        return self.mcph("doctor", "run", *args)
 
 
 @pytest.fixture
