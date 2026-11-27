@@ -6,7 +6,7 @@
 |-------------------------------------------------- | -------: | -------: | -------: | --------: |
 | src/mcph/\_\_init\_\_.py                          |        1 |        0 |     100% |           |
 | src/mcph/auth\_probe.py                           |       81 |        0 |     100% |           |
-| src/mcph/cli.py                                   |       96 |        0 |     100% |           |
+| src/mcph/cli.py                                   |       98 |        0 |     100% |           |
 | src/mcph/config.py                                |      192 |        0 |     100% |           |
 | src/mcph/doctor.py                                |      161 |        0 |     100% |           |
 | src/mcph/mcp\_client.py                           |      128 |        0 |     100% |           |
@@ -19,7 +19,7 @@
 | src/mcph/rules/builtin/tool\_name\_snake\_case.py |       21 |        0 |     100% |           |
 | src/mcph/rules/settings.py                        |       15 |        0 |     100% |           |
 | src/mcph/token\_store.py                          |       85 |        0 |     100% |           |
-| **TOTAL**                                         | **1006** |    **0** | **100%** |           |
+| **TOTAL**                                         | **1008** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
