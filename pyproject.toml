@@ -10,6 +10,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "fastmcp-slim[client]>=4.2,<5",
     "pydantic>=2.7",
     "pyyaml>=6.0.1",
     "typer>=0.15.0",
@@ -24,6 +25,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "fastmcp-slim[server]>=4.2,<5",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
 ]
@@ -31,6 +33,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=mcph --cov-report=term-missing --cov-fail-under=90"
+markers = ["e2e: starts real MCP server subprocesses (slower)"]
 
 [tool.coverage.run]
 relative_files = true

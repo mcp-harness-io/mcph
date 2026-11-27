@@ -64,7 +64,7 @@ class Config(_StrictModel):
     version: Literal["1"] = CONFIG_VERSION
     servers: list[ServerConfig] = Field(min_length=1)
 
-    _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
+    _path: Path | None = PrivateAttr(default=None)
 
     @field_validator("version", mode="before")
     @classmethod
@@ -91,9 +91,17 @@ class Config(_StrictModel):
         return servers
 
     @property
+    def path(self) -> Path | None:
+        """Absolute path of the config file, or ``None`` if built in code."""
+        return self._path
+
+    @property
     def base_dir(self) -> Path:
-        """Directory containing the config file; server commands run from here."""
-        return self._base_dir
+        """Directory containing the config file; server commands run from here.
+
+        Falls back to the current directory for a config built in code.
+        """
+        return self._path.parent if self._path is not None else Path.cwd()
 
     @property
     def primary_server(self) -> ServerConfig:
@@ -135,7 +143,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     except ValidationError as exc:
         raise ConfigError(_validation_detail(config_path, exc)) from exc
 
-    config._base_dir = Path(os.path.abspath(config_path)).parent
+    config._path = Path(os.path.abspath(config_path))
     return config
 
 
