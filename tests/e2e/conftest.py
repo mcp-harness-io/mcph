@@ -20,6 +20,13 @@ from mcph.cli import app
 DEMO_SERVER = Path(__file__).with_name("demo_server.py")
 
 
+class FakeServerUrl(str):
+    """The URL of a fake server's MCP endpoint, which also knows what it was asked for."""
+
+    hits: list[str]
+    """The paths that were requested from the server so far, in order."""
+
+
 class Project:
     """A temporary project directory holding a copy of the demo server.
 
@@ -62,15 +69,19 @@ class Project:
         with ``oauth`` it uses the token stored by ``mcph auth login`` (pass a
         dict for extra ``auth`` settings).
         """
-        entry = {"name": name, "transport": "http", "url": url}
+        entry = {"name": name, "transport": "http", "url": str(url)}  # YAML wants a plain str
         if token_env:
             entry["auth"] = {"type": "bearer", "token_env": token_env}
         elif oauth:
             entry["auth"] = {"type": "oauth", **(oauth if isinstance(oauth, dict) else {})}
         return entry
 
-    def write_config(self, *servers: dict) -> Path:
-        self.config_path.write_text(yaml.safe_dump({"servers": list(servers)}))
+    def write_config(self, *servers: dict, rules: dict[str, str] | None = None) -> Path:
+        """Write ``mcph.yaml``; ``rules`` becomes its ``doctor.rules`` section."""
+        config: dict = {"servers": list(servers)}
+        if rules is not None:
+            config["doctor"] = {"rules": rules}
+        self.config_path.write_text(yaml.safe_dump(config))
         return self.config_path
 
     def mcph(self, *args: str):
@@ -253,7 +264,8 @@ def fake_oauth_server():
     """Start a server whose OAuth documents can be set to anything.
 
     Returns ``start(announced=None, missing=False, **metadata)``, which gives the
-    URL of its MCP endpoint. The endpoint answers 401 and points at protected
+    URL of its MCP endpoint (a ``FakeServerUrl``: its ``hits`` list the paths the
+    server was asked for). The endpoint answers 401 and points at protected
     resource metadata that announces ``announced`` (default: the server itself,
     without a trailing slash) as the authorization server. Keyword arguments
     override the authorization server's metadata (``None`` removes a key);
@@ -263,12 +275,15 @@ def fake_oauth_server():
     servers: list[HTTPServer] = []
     threads: list[threading.Thread] = []
 
-    def start(announced: str | None = None, missing: bool = False, **metadata: object) -> str:
+    def start(
+        announced: str | None = None, missing: bool = False, **metadata: object
+    ) -> FakeServerUrl:
         class Handler(BaseHTTPRequestHandler):
             def respond(self) -> None:
                 self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 state = self.server.state
                 path = self.path.split("?")[0]
+                state["hits"].append(path)
                 if path == "/mcp":
                     status, headers, body = 401, {
                         "WWW-Authenticate": "Bearer resource_metadata="
@@ -317,12 +332,15 @@ def fake_oauth_server():
             "announced": fill(announced) if announced else base,
             "missing": missing,
             "metadata": {k: v for k, v in merged.items() if v is not None},
+            "hits": [],
         }
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         servers.append(server)
         threads.append(thread)
-        return f"{base}/mcp"
+        url = FakeServerUrl(f"{base}/mcp")
+        url.hits = server.state["hits"]
+        return url
 
     yield start
 

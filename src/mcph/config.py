@@ -6,8 +6,10 @@ servers that mcph starts itself, and ``http`` servers that are already running.
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -21,6 +23,8 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
+
+from mcph.rules import known_rules
 
 DEFAULT_CONFIG_NAME = "mcph.yaml"
 CONFIG_VERSION = "1"
@@ -135,11 +139,59 @@ ServerConfig = Annotated[
 ]
 
 
+RuleSetting = Literal["error", "warn", "off"]
+
+
+class DoctorConfig(_StrictModel):
+    """Settings of ``mcph doctor``."""
+
+    rules: dict[str, RuleSetting] = Field(default_factory=dict)
+    """How serious each rule is: ``error``, ``warn`` or ``off``.
+
+    Rules that are not listed keep their default severity."""
+
+    @field_validator("rules", mode="before")
+    @classmethod
+    def _normalize_settings(cls, rules: object) -> object:
+        if not isinstance(rules, dict):
+            return rules  # validation reports it
+        return {rule_id: _normalize_setting(value) for rule_id, value in rules.items()}
+
+    @field_validator("rules")
+    @classmethod
+    def _check_rule_ids(cls, rules: dict[str, RuleSetting]) -> dict[str, RuleSetting]:
+        known = list(known_rules())
+        unknown = [rule_id for rule_id in rules if rule_id not in known]
+        if unknown:
+            raise ValueError(_unknown_rules_message(unknown, known))
+        return rules
+
+
+def _normalize_setting(value: object) -> object:
+    # YAML reads an unquoted ``off`` as false; severities may be written in any case.
+    if value is False:
+        return "off"
+    return value.lower() if isinstance(value, str) else value
+
+
+def _unknown_rules_message(unknown: Iterable[str], known: list[str]) -> str:
+    named = []
+    for rule_id in unknown:
+        text = repr(rule_id)
+        closest = difflib.get_close_matches(rule_id, known, n=1)
+        if closest:
+            text += f" (did you mean {closest[0]!r}?)"
+        named.append(text)
+    noun = "rule" if len(named) == 1 else "rules"
+    return f"unknown {noun} {', '.join(named)}; known rules: {', '.join(known)}"
+
+
 class Config(_StrictModel):
     """The contents of ``mcph.yaml``."""
 
     version: Literal["1"] = CONFIG_VERSION
     servers: list[ServerConfig] = Field(min_length=1)
+    doctor: DoctorConfig = Field(default_factory=DoctorConfig)
 
     _path: Path | None = PrivateAttr(default=None)
 

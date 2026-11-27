@@ -7,6 +7,7 @@ from mcph.config import (
     BearerAuthConfig,
     Config,
     ConfigError,
+    DoctorConfig,
     HttpServerConfig,
     OAuthAuthConfig,
     StdioServerConfig,
@@ -213,7 +214,7 @@ def test_top_level_must_be_a_mapping(tmp_path):
     assert "list" in message
 
 
-@pytest.mark.parametrize("key", ["extends", "gateway", "doctor", "eval", "typo"])
+@pytest.mark.parametrize("key", ["extends", "gateway", "eval", "typo"])
 def test_unknown_top_level_key_is_rejected(tmp_path, key):
     message = error_for(tmp_path, MINIMAL + f"{key}: {{}}\n")
 
@@ -563,3 +564,108 @@ def test_bearer_does_not_take_ignore_issuer_trailing_slash(tmp_path):
 
     assert "servers[0].auth.ignore_issuer_trailing_slash: Extra inputs" in message
 
+
+# --- doctor rule settings ------------------------------------------------------------------
+
+
+def test_a_config_without_a_doctor_section_changes_no_rule(tmp_path):
+    config = load(tmp_path, MINIMAL)
+
+    assert config.doctor == DoctorConfig()
+    assert config.doctor.rules == {}
+
+
+def test_rules_can_be_set_to_error_warn_or_off(tmp_path):
+    config = load(
+        tmp_path,
+        MINIMAL
+        + """\
+doctor:
+  rules:
+    core.tool_name_snake_case: error
+    oauth.pkce: warn
+    oauth.registration: "off"
+""",
+    )
+
+    assert config.doctor.rules == {
+        "core.tool_name_snake_case": "error",
+        "oauth.pkce": "warn",
+        "oauth.registration": "off",
+    }
+
+
+@pytest.mark.parametrize("spelling", ["off", "Off", "OFF"])
+def test_an_unquoted_off_works_although_yaml_reads_it_as_false(tmp_path, spelling):
+    config = load(tmp_path, MINIMAL + f"doctor:\n  rules:\n    oauth.pkce: {spelling}\n")
+
+    assert config.doctor.rules == {"oauth.pkce": "off"}
+
+
+@pytest.mark.parametrize("spelling", ["WARN", "Warn", "warn"])
+def test_severities_can_be_written_in_any_case(tmp_path, spelling):
+    config = load(tmp_path, MINIMAL + f"doctor:\n  rules:\n    oauth.pkce: {spelling}\n")
+
+    assert config.doctor.rules == {"oauth.pkce": "warn"}
+
+
+@pytest.mark.parametrize("value", ["on", "true", "yes", "fatal", "ignore", "1", "[]", "~"])
+def test_a_rule_setting_must_be_error_warn_or_off(tmp_path, value):
+    message = error_for(tmp_path, MINIMAL + f"doctor:\n  rules:\n    oauth.pkce: {value}\n")
+
+    assert message.endswith("doctor.rules.oauth.pkce: Input should be 'error', 'warn' or 'off'")
+
+
+def test_an_unknown_rule_is_reported_with_a_suggestion_and_the_known_rules(tmp_path):
+    message = error_for(
+        tmp_path, MINIMAL + "doctor:\n  rules:\n    core.tool_name_snakecase: warn\n"
+    )
+
+    assert message.splitlines()[1:] == [
+        "  doctor.rules: unknown rule 'core.tool_name_snakecase' "
+        "(did you mean 'core.tool_name_snake_case'?); known rules: "
+        "core.tool_name_snake_case, oauth.metadata, oauth.issuer, oauth.pkce, "
+        "oauth.registration"
+    ]
+
+
+def test_an_unknown_rule_that_resembles_nothing_gets_no_suggestion(tmp_path):
+    message = error_for(tmp_path, MINIMAL + "doctor:\n  rules:\n    zzz: warn\n")
+
+    assert "unknown rule 'zzz'; known rules: " in message
+    assert "did you mean" not in message
+
+
+def test_every_unknown_rule_is_named_at_once(tmp_path):
+    message = error_for(
+        tmp_path,
+        MINIMAL
+        + "doctor:\n  rules:\n    oauth.pkse: off\n    zzz: warn\n    oauth.pkce: error\n",
+    )
+
+    assert message.splitlines()[1:] == [
+        "  doctor.rules: unknown rules 'oauth.pkse' (did you mean 'oauth.pkce'?), 'zzz'; "
+        "known rules: core.tool_name_snake_case, oauth.metadata, oauth.issuer, oauth.pkce, "
+        "oauth.registration"
+    ]
+
+
+def test_rules_must_be_a_mapping(tmp_path):
+    message = error_for(tmp_path, MINIMAL + "doctor:\n  rules: [oauth.pkce]\n")
+
+    assert message.endswith("doctor.rules: Input should be a valid dictionary")
+
+
+def test_unknown_doctor_keys_are_rejected(tmp_path):
+    message = error_for(tmp_path, MINIMAL + "doctor:\n  strict: true\n")
+
+    assert message.endswith("doctor.strict: Extra inputs are not permitted")
+
+
+def test_doctor_settings_can_be_built_in_code():
+    config = Config(
+        servers=[StdioServerConfig(name="a", transport="stdio", command="x")],
+        doctor=DoctorConfig(rules={"oauth.pkce": "off"}),
+    )
+
+    assert config.doctor.rules == {"oauth.pkce": "off"}
