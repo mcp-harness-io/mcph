@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from mcph.config import (
+    BearerAuthConfig,
     Config,
     ConfigError,
     HttpServerConfig,
@@ -406,3 +407,72 @@ def test_all_problems_are_reported_together(tmp_path):
     assert "extends: Extra inputs are not permitted" in message
     assert "servers[0].name:" in message
     assert "servers[0].command:" in message
+
+
+# --- auth -------------------------------------------------------------------------
+
+HTTP_WITH_AUTH = """\
+servers:
+  - name: docs
+    transport: http
+    url: https://example.com/mcp
+    auth:
+      type: bearer
+      token_env: DOCS_TOKEN
+"""
+
+
+def test_http_server_can_send_a_bearer_token_from_an_environment_variable(tmp_path):
+    config = load(tmp_path, HTTP_WITH_AUTH)
+
+    [server] = config.servers
+    assert server.auth == BearerAuthConfig(type="bearer", token_env="DOCS_TOKEN")
+
+
+def test_auth_is_optional(tmp_path):
+    config = load(
+        tmp_path,
+        "servers:\n  - {name: docs, transport: http, url: 'http://x/mcp'}\n",
+    )
+
+    assert config.servers[0].auth is None
+
+
+def test_a_token_cannot_be_written_into_the_config(tmp_path):
+    message = error_for(tmp_path, HTTP_WITH_AUTH + "      token: abc123\n")
+
+    assert "servers[0].auth.token: Extra inputs are not permitted" in message
+
+
+def test_auth_needs_a_type_and_a_variable_name(tmp_path):
+    message = error_for(
+        tmp_path,
+        "servers:\n  - {name: d, transport: http, url: 'http://x/mcp', auth: {}}\n",
+    )
+
+    assert "servers[0].auth.type: Field required" in message
+    assert "servers[0].auth.token_env: Field required" in message
+
+
+def test_only_bearer_auth_is_supported_for_now(tmp_path):
+    message = error_for(tmp_path, HTTP_WITH_AUTH.replace("type: bearer", "type: oauth"))
+
+    assert "servers[0].auth.type: Input should be 'bearer'" in message
+
+
+@pytest.mark.parametrize("name", ["1TOKEN", "MY-TOKEN", "my token", "$TOKEN", ""])
+def test_token_env_must_be_a_variable_name(tmp_path, name):
+    message = error_for(
+        tmp_path, HTTP_WITH_AUTH.replace("token_env: DOCS_TOKEN", f"token_env: '{name}'")
+    )
+
+    assert "servers[0].auth.token_env: must be an environment variable name" in message
+
+
+def test_stdio_servers_have_no_auth_setting(tmp_path):
+    message = error_for(
+        tmp_path, MINIMAL + "    auth: {type: bearer, token_env: TOKEN}\n"
+    )
+
+    assert "servers[0].auth: Extra inputs are not permitted" in message
+

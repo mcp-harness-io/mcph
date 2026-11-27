@@ -138,16 +138,28 @@ def _describe(snapshot: ServerSnapshot) -> str:
 
 
 def _auth_lines(auth: AuthInfo) -> list[str]:
-    """Describe what an HTTP server that answered 401 says about its auth."""
-    if auth.challenge:
-        lines = [f"challenge: {auth.challenge}"]
-    else:
-        lines = ["challenge: none (the 401 had no WWW-Authenticate header)"]
+    """Describe what an HTTP server that refused us says about its auth."""
+    lines: list[str] = []
+    if auth.error:
+        lines.append(f"error: {auth.error}")
+    if auth.error_description:
+        lines.append(f"server says: {auth.error_description}")
+    if auth.required_scope:
+        lines.append(f"scope the server asks for: {auth.required_scope}")
+
+    parsed = bool(lines)
+    if not parsed:  # nothing was picked out of the challenge: show it as sent
+        if auth.challenge:
+            lines.append(f"challenge: {auth.challenge}")
+        else:
+            lines.append(
+                f"challenge: none (the {auth.status} had no WWW-Authenticate header)"
+            )
+
     if auth.metadata_url is None:
         return [*lines, "no OAuth protected resource metadata found"]
-
-    if not auth.challenge or auth.metadata_url not in auth.challenge:
-        lines.append(f"metadata: {auth.metadata_url}")  # found at a well-known URL
+    if parsed or not auth.challenge or auth.metadata_url not in auth.challenge:
+        lines.append(f"metadata: {auth.metadata_url}")
     servers = auth.authorization_servers
     if servers:
         label = "authorization servers" if len(servers) > 1 else "authorization server"

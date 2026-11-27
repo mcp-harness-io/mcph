@@ -10,7 +10,10 @@ E2E_FAIL_ON_START  if set, print an error to stderr and exit before serving
 E2E_STARTUP_DELAY  seconds to sleep before serving
 E2E_TRANSPORT      "http" to serve Streamable HTTP on 127.0.0.1:$E2E_PORT (default: stdio)
 E2E_PORT           port for the http transport
-E2E_AUTH           if set (http only), require a bearer token like an OAuth-protected server
+E2E_AUTH           if set (http only), require a bearer token like an OAuth-protected server;
+                   valid tokens: e2e-secret-token (scope api.read) and
+                   e2e-writer-token (scopes api.read and api.write)
+E2E_REQUIRED_SCOPES  comma-separated scopes a token must have (with E2E_AUTH)
 """
 
 import os
@@ -39,7 +42,19 @@ if os.environ.get("E2E_AUTH"):
     # Unauthenticated requests get a 401 pointing at the protected resource metadata.
     auth = RemoteAuthProvider(
         token_verifier=StaticTokenVerifier(
-            tokens={"e2e-secret-token": {"client_id": "e2e", "scopes": ["api.read"]}}
+            tokens={
+                "e2e-secret-token": {"client_id": "e2e", "scopes": ["api.read"]},
+                "e2e-writer-token": {
+                    "client_id": "e2e",
+                    "scopes": ["api.read", "api.write"],
+                },
+            },
+            required_scopes=[
+                scope
+                for scope in os.environ.get("E2E_REQUIRED_SCOPES", "").split(",")
+                if scope
+            ]
+            or None,
         ),
         authorization_servers=[AnyHttpUrl("https://auth.example.test")],
         base_url=f"http://127.0.0.1:{os.environ['E2E_PORT']}",

@@ -245,3 +245,77 @@ WELL_KNOWN = "http://h:8080/.well-known/oauth-protected-resource"
 )
 def test_where_the_metadata_is_looked_for(url, challenge, expected):
     assert _metadata_candidates(url, challenge) == expected
+
+
+# --- sending a bearer token -----------------------------------------------------------
+
+TOKEN = "s3cr3t-token"
+
+
+def probe_with_token(handler, *, token=TOKEN, url=URL):
+    transport = httpx2.MockTransport(handler)
+    return asyncio.run(probe_auth(url, timeout=5.0, token=token, transport=transport))
+
+
+def test_the_token_is_sent_to_the_mcp_endpoint_and_nowhere_else():
+    server = FakeServer(unauthorized(), {PRM: METADATA})
+
+    probe_with_token(server)
+
+    post, *gets = server.requests
+    assert post.headers["authorization"] == f"Bearer {TOKEN}"
+    assert gets, "the metadata should have been fetched"
+    assert all("authorization" not in request.headers for request in gets)
+
+
+def test_a_refused_token_is_explained_by_the_challenge():
+    challenge = (
+        'Bearer error="invalid_token", error_description="The token expired", '
+        f'scope="api.write", resource_metadata="{PRM}"'
+    )
+    server = FakeServer(unauthorized(challenge), {PRM: METADATA})
+
+    info = probe_with_token(server)
+
+    assert info.status == 401
+    assert info.error == "invalid_token"
+    assert info.error_description == "The token expired"
+    assert info.required_scope == "api.write"
+    assert info.metadata_url == PRM
+    assert info.authorization_servers == ("https://auth.example.com/",)
+
+
+def test_a_403_for_a_missing_scope_is_explained():
+    challenge = 'Bearer error="insufficient_scope", scope="api.write"'
+    server = FakeServer(httpx2.Response(403, headers={"WWW-Authenticate": challenge}))
+
+    info = probe_with_token(server)
+
+    assert info.status == 403
+    assert info.error == "insufficient_scope"
+    assert info.required_scope == "api.write"
+
+
+def test_other_403s_are_not_mistaken_for_an_auth_problem():
+    server = FakeServer(httpx2.Response(403, text="blocked by a firewall"))
+
+    assert probe_with_token(server) is None
+
+
+def test_a_403_without_a_token_is_not_an_auth_explanation():
+    challenge = 'Bearer error="insufficient_scope", scope="api.write"'
+    server = FakeServer(httpx2.Response(403, headers={"WWW-Authenticate": challenge}))
+
+    assert probe(server) is None  # no token was sent
+
+
+def test_a_token_that_works_gives_nothing():
+    assert probe_with_token(FakeServer(httpx2.Response(200))) is None
+
+
+def test_quoted_challenge_values_are_unescaped():
+    params = _challenge_params(r'Bearer error_description="the \"x\" token", error="e"')
+
+    assert params["error_description"] == 'the "x" token'
+    assert params["error"] == "e"
+

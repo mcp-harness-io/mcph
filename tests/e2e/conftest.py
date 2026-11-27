@@ -47,9 +47,15 @@ class Project:
         }
 
     @staticmethod
-    def http_entry(name: str, url: str) -> dict:
-        """A ``servers`` entry for an already running HTTP server."""
-        return {"name": name, "transport": "http", "url": url}
+    def http_entry(name: str, url: str, token_env: str | None = None) -> dict:
+        """A ``servers`` entry for an already running HTTP server.
+
+        With ``token_env`` the entry sends the bearer token from that variable.
+        """
+        entry = {"name": name, "transport": "http", "url": url}
+        if token_env:
+            entry["auth"] = {"type": "bearer", "token_env": token_env}
+        return entry
 
     def write_config(self, *servers: dict) -> Path:
         self.config_path.write_text(yaml.safe_dump({"servers": list(servers)}))

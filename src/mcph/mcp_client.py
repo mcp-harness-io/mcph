@@ -7,8 +7,11 @@ changes stay contained here.
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +28,10 @@ from mcph.config import HttpServerConfig, ServerConfig, StdioServerConfig
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 _STDERR_TAIL_LINES = 10
+
+# A bearer token is visible ASCII without spaces (RFC 6750 allows more, but not
+# whitespace or control characters, which would also corrupt the header).
+_TOKEN = re.compile(r"[\x21-\x7e]+")
 
 
 @dataclass(frozen=True)
@@ -126,30 +133,62 @@ async def snapshot_http_server(
 ) -> ServerSnapshot:
     """Connect to a running Streamable HTTP server, handshake and list its tools.
 
-    mcph does not start or stop the server. Raises :class:`ServerError` if it
-    cannot be reached, does not answer within ``timeout`` seconds, or fails
-    while being queried; the message names the URL. If the server answers 401,
-    the error says authentication is required and carries what the server
-    advertises about it (:attr:`ServerError.auth`).
+    mcph does not start or stop the server. If the server has ``auth``, the
+    bearer token is read from the environment variable it names and sent with
+    every request; it never appears in an error. Raises :class:`ServerError` if
+    the token is missing, the server cannot be reached, does not answer within
+    ``timeout`` seconds, or fails while being queried; the message names the URL.
+    If the server refuses us (401, or 403 for a missing scope), the error says
+    why and carries what the server advertises (:attr:`ServerError.auth`).
     """
+    token = _read_token(server)
     try:
         return await _snapshot(
-            StreamableHttpTransport(url=server.url),
+            StreamableHttpTransport(url=server.url, auth=token),
             kind="http",
             connecting=f"connecting to {server.url}",
             timeout=timeout,
+            secrets=(token,) if token else (),
         )
     except ServerError as error:
         if error.timed_out:
             raise
-        auth = await probe_auth(server.url, timeout=timeout)
+        auth = await probe_auth(server.url, timeout=timeout, token=token)
         if auth is None:
             raise
+        raise ServerError(_auth_message(server, auth), auth=auth) from error
+
+
+def _read_token(server: HttpServerConfig) -> str | None:
+    """The bearer token from the server's ``auth.token_env``, or ``None`` if no auth."""
+    if server.auth is None:
+        return None
+    name = server.auth.token_env
+    value = os.environ.get(name)
+    if value is None:
+        raise ServerError(f"environment variable {name} is not set (auth.token_env)")
+    token = value.strip()
+    if not token:
+        raise ServerError(f"environment variable {name} is empty (auth.token_env)")
+    if not _TOKEN.fullmatch(token):
         raise ServerError(
-            "authentication required: the server answered 401 "
-            "(mcph cannot send credentials yet)",
-            auth=auth,
-        ) from error
+            f"environment variable {name} does not hold a usable bearer token "
+            "(spaces and control characters are not allowed)"
+        )
+    return token
+
+
+def _auth_message(server: HttpServerConfig, auth: AuthInfo) -> str:
+    """Say in one line why the server refused us; the details come with ``auth``."""
+    if server.auth is None:
+        return (
+            f"authentication required: the server answered {auth.status} "
+            "(send a bearer token with `auth` in mcph.yaml)"
+        )
+    variable = server.auth.token_env
+    if auth.error == "insufficient_scope":
+        return f"the token in ${variable} lacks a scope the server requires"
+    return f"the server rejected the token in ${variable} (HTTP {auth.status})"
 
 
 async def _snapshot(
@@ -159,6 +198,7 @@ async def _snapshot(
     connecting: str,
     timeout: float,
     stderr_path: Path | None = None,
+    secrets: Sequence[str] = (),
 ) -> ServerSnapshot:
     phase = connecting
     try:
@@ -177,9 +217,9 @@ async def _snapshot(
             timed_out=True,
         ) from None
     except Exception as exc:
+        detail = _redact(str(exc) or type(exc).__name__, secrets)
         raise ServerError(
-            f"failed while {phase}: {exc or type(exc).__name__}",
-            _stderr_tail(stderr_path),
+            f"failed while {phase}: {detail}", _stderr_tail(stderr_path)
         ) from exc
 
     return ServerSnapshot(
@@ -190,6 +230,13 @@ async def _snapshot(
         tools=tuple(ToolInfo(tool.name, tool.description) for tool in tools),
         transport=kind,
     )
+
+
+def _redact(text: str, secrets: Sequence[str]) -> str:
+    """Hide secrets in text that comes from a library and may echo what we sent."""
+    for secret in secrets:
+        text = text.replace(secret, "***")
+    return text
 
 
 def _stderr_tail(path: Path | None) -> str:
