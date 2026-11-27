@@ -15,7 +15,7 @@ uvx mcph --help     # or run it without installing
 
 ## Quick start
 
-Describe your MCP servers in a `mcph.yaml` in your project:
+Describe your MCP servers in a `mcph.yaml` in your project: `stdio` servers that mcph starts for you, and `http` servers that are already running.
 
 ```yaml
 servers:
@@ -25,17 +25,22 @@ servers:
     args: ["run", "python", "src/server.py"]
     env:
       LOG_LEVEL: WARNING
+  - name: docs
+    transport: http
+    url: http://localhost:8080/mcp
 ```
 
 Then check them:
 
 ```console
 $ mcph doctor
-Checking 1 server from /path/to/mcph.yaml
+Checking 2 servers from /path/to/mcph.yaml
 
 orders
   OK     started in 423 ms (orders-server 1.0.0, MCP 2026-07-28), 3 tools
   WARN   core.tool_name_snake_case: tool 'getOrder' is not snake_case (try 'get_order')
+docs
+  OK     connected in 87 ms (docs-server 2.1.0, MCP 2026-07-28), 5 tools
 
 All servers OK, 1 warning.
 ```
@@ -44,7 +49,7 @@ All servers OK, 1 warning.
 
 | Command | What it does |
 |---|---|
-| `mcph doctor` | Starts each configured server, completes the MCP handshake, lists its tools, checks them against the built-in rules and reports problems. |
+| `mcph doctor` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports problems. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
 
@@ -68,8 +73,9 @@ Warnings do not fail the run unless you pass `--strict`.
 - `version`: optional, `"1"`.
 - `servers`: a list of servers, each with:
   - `name`: unique; letters, digits, `_` and `-`.
-  - `transport`: `stdio` (the only transport so far).
-  - `command`, `args`, `env`: how to start the server.
+  - `transport`: `stdio` or `http`.
+  - `command`, `args`, `env` (`stdio`): how to start the server.
+  - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it, and it cannot send credentials yet, so a server that requires authentication fails the check.
   - `primary`: optional `true` for the server you are developing (at most one).
 
-Servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.
+`stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.

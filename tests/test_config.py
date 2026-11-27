@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from mcph.config import Config, ConfigError, ServerConfig, load_config
+from mcph.config import (
+    Config,
+    ConfigError,
+    HttpServerConfig,
+    StdioServerConfig,
+    load_config,
+)
 
 
 def write(tmp_path: Path, text: str, name: str = "mcph.yaml") -> Path:
@@ -123,7 +129,9 @@ def test_path_is_the_absolute_path_of_the_config_file(tmp_path):
 
 
 def test_config_built_in_code_has_no_path():
-    config = Config(servers=[ServerConfig(name="a", transport="stdio", command="x")])
+    config = Config(
+        servers=[StdioServerConfig(name="a", transport="stdio", command="x")]
+    )
 
     assert config.path is None
     assert config.base_dir == Path.cwd()
@@ -216,24 +224,110 @@ def test_unknown_server_key_is_rejected(tmp_path):
     assert "servers[0].auth: Extra inputs are not permitted" in message
 
 
-def test_http_transport_is_not_supported_yet(tmp_path):
-    message = error_for(
+def test_http_server_entry(tmp_path):
+    config = load(
         tmp_path,
         """\
         servers:
           - name: docs
             transport: http
             url: https://example.com/mcp
+            primary: true
         """,
     )
 
-    assert "servers[0].transport: Input should be 'stdio'" in message
+    [server] = config.servers
+    assert isinstance(server, HttpServerConfig)
+    assert server.url == "https://example.com/mcp"
+    assert server.primary is True
+
+
+def test_stdio_and_http_servers_can_be_mixed(tmp_path):
+    config = load(
+        tmp_path,
+        """\
+        servers:
+          - {name: local, transport: stdio, command: uv}
+          - {name: remote, transport: http, url: "http://127.0.0.1:8080/mcp"}
+        """,
+    )
+
+    assert [type(server) for server in config.servers] == [
+        StdioServerConfig,
+        HttpServerConfig,
+    ]
+    assert config.primary_server.name == "local"
+
+
+def test_server_names_must_be_unique_across_transports(tmp_path):
+    message = error_for(
+        tmp_path,
+        """\
+        servers:
+          - {name: a, transport: stdio, command: uv}
+          - {name: a, transport: http, url: "http://x/mcp"}
+        """,
+    )
+
+    assert "duplicate server name 'a'" in message
+
+
+def test_http_server_requires_a_url(tmp_path):
+    message = error_for(tmp_path, "servers:\n  - {name: docs, transport: http}\n")
+
+    assert "servers[0].url: Field required" in message
+    assert ".http." not in message  # pydantic's union tag is not a YAML key
+
+
+@pytest.mark.parametrize(
+    "url", ["ftp://example.com/mcp", "localhost:8080/mcp", "/mcp", "example.com", ""]
+)
+def test_http_url_must_be_http_or_https(tmp_path, url):
+    message = error_for(
+        tmp_path,
+        f"servers:\n  - {{name: docs, transport: http, url: '{url}'}}\n",
+    )
+
+    assert "servers[0].url: must be an http:// or https:// URL" in message
+
+
+@pytest.mark.parametrize("key", ["command", "args", "env"])
+def test_http_server_rejects_stdio_only_keys(tmp_path, key):
+    value = "x" if key == "command" else "[]" if key == "args" else "{}"
+    message = error_for(
+        tmp_path,
+        "servers:\n"
+        f"  - {{name: docs, transport: http, url: 'http://x/mcp', {key}: {value}}}\n",
+    )
+
+    assert f"servers[0].{key}: Extra inputs are not permitted" in message
+
+
+def test_stdio_server_rejects_a_url(tmp_path):
+    message = error_for(tmp_path, MINIMAL + "    url: http://x/mcp\n")
+
+    assert "servers[0].url: Extra inputs are not permitted" in message
+
+
+def test_stdio_server_still_requires_a_command(tmp_path):
+    message = error_for(tmp_path, "servers:\n  - {name: a, transport: stdio}\n")
+
+    assert "servers[0].command: Field required" in message
+    assert ".stdio." not in message
 
 
 def test_transport_is_required(tmp_path):
     message = error_for(tmp_path, "servers:\n  - {name: orders, command: uv}\n")
 
-    assert "servers[0].transport: Field required" in message
+    assert "servers[0].transport: Field required (stdio or http)" in message
+
+
+def test_unknown_transport_is_rejected(tmp_path):
+    message = error_for(
+        tmp_path, "servers:\n  - {name: a, transport: sse, url: 'http://x/sse'}\n"
+    )
+
+    assert "servers[0].transport: Input should be 'stdio' or 'http'" in message
 
 
 def test_unsupported_version_is_rejected(tmp_path):

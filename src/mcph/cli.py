@@ -63,9 +63,10 @@ def doctor(
         ),
     ] = False,
 ) -> None:
-    """Start the configured MCP servers and check that they respond.
+    """Check that the configured MCP servers respond.
 
-    Also checks what each server exposes against the built-in rules.
+    Starts stdio servers and connects to http servers (which must already be
+    running), then checks what each exposes against the built-in rules.
     Exits with 1 if a server fails (or, with --strict, has warnings), and with 2
     if the config is invalid.
     """

@@ -1,7 +1,7 @@
 """Loading and validation of ``mcph.yaml``.
 
-The config file declares the MCP servers a project works with. Only the
-``stdio`` transport is supported for now.
+The config file declares the MCP servers a project works with: ``stdio``
+servers that mcph starts itself, and ``http`` servers that are already running.
 """
 
 from __future__ import annotations
@@ -9,7 +9,8 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import (
@@ -25,6 +26,7 @@ DEFAULT_CONFIG_NAME = "mcph.yaml"
 CONFIG_VERSION = "1"
 
 _SERVER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_TRANSPORTS = ("stdio", "http")
 
 
 class ConfigError(Exception):
@@ -37,14 +39,8 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ServerConfig(_StrictModel):
-    """One MCP server to work with."""
-
+class _ServerBase(_StrictModel):
     name: str
-    transport: Literal["stdio"]
-    command: str = Field(min_length=1)
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
     primary: bool = False
 
     @field_validator("name")
@@ -56,6 +52,35 @@ class ServerConfig(_StrictModel):
                 "digits, '_' and '-'"
             )
         return value
+
+
+class StdioServerConfig(_ServerBase):
+    """A server that mcph starts as a subprocess and talks to over stdio."""
+
+    transport: Literal["stdio"]
+    command: str = Field(min_length=1)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class HttpServerConfig(_ServerBase):
+    """A server that is already running and speaks Streamable HTTP."""
+
+    transport: Literal["http"]
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError("must be an http:// or https:// URL")
+        return value
+
+
+ServerConfig = Annotated[
+    StdioServerConfig | HttpServerConfig, Field(discriminator="transport")
+]
 
 
 class Config(_StrictModel):
@@ -158,10 +183,28 @@ def _yaml_detail(exc: yaml.YAMLError) -> str:
 def _validation_detail(path: Path, exc: ValidationError) -> str:
     lines = [f"Invalid config {path}:"]
     for error in exc.errors():
+        loc = _without_union_tag(error["loc"])
         message = error["msg"].removeprefix("Value error, ")
-        where = _format_loc(error["loc"])
+        if error["type"] == "union_tag_not_found":
+            loc, message = (*loc, "transport"), "Field required (stdio or http)"
+        elif error["type"] == "union_tag_invalid":
+            loc, message = (*loc, "transport"), "Input should be 'stdio' or 'http'"
+        where = _format_loc(loc)
         lines.append(f"  {where}: {message}" if where else f"  {message}")
     return "\n".join(lines)
+
+
+def _without_union_tag(loc: tuple[int | str, ...]) -> tuple[int | str, ...]:
+    # For errors inside a server entry pydantic inserts the matched transport
+    # ("stdio" or "http") after the list index; that is not a key in the YAML.
+    if (
+        len(loc) > 2
+        and loc[0] == "servers"
+        and isinstance(loc[1], int)
+        and loc[2] in _TRANSPORTS
+    ):
+        return loc[:2] + loc[3:]
+    return loc
 
 
 def _format_loc(loc: tuple[int | str, ...]) -> str:
