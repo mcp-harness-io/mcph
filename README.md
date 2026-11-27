@@ -53,6 +53,7 @@ All servers OK, 1 warning.
 | Command | What it does |
 |---|---|
 | `mcph doctor` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports problems. |
+| `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
 
@@ -65,11 +66,27 @@ If an `http` server refuses mcph, doctor says why instead of a generic error: no
 
 ```console
 docs
-  ERROR  authentication required: the server answered 401 (send a bearer token with `auth` in mcph.yaml)
+  ERROR  authentication required: the server answered 401 (add `auth` to this server in mcph.yaml)
          challenge: Bearer resource_metadata="http://localhost:8080/.well-known/oauth-protected-resource/mcp"
          authorization server: https://auth.example.com/
          scopes: api.read, api.write
 ```
+
+## OAuth login
+
+For a server that uses OAuth, set `auth: {type: oauth}` (optionally with `scopes`) and sign in once:
+
+```console
+$ mcph auth login docs
+Signing in to docs (http://localhost:8080/mcp)
+Opening your browser. If it does not open, visit:
+  https://auth.example.com/authorize?response_type=code&client_id=...
+Logged in to docs; the token expires in 15 min.
+```
+
+`mcph doctor` then uses the stored token. It is an access token that usually expires after a few minutes; when it has, doctor tells you to log in again. `mcph auth status` shows who is logged in and when each token expires, and `mcph auth logout docs` deletes the token. For CI use a bearer token from an environment variable instead.
+
+Tokens are kept in a file only you can read, under mcph's state directory (set `MCPH_STATE_DIR` to put it elsewhere). mcph does not keep refresh tokens.
 
 ## Rules
 
@@ -89,7 +106,9 @@ Warnings do not fail the run unless you pass `--strict`.
   - `transport`: `stdio` or `http`.
   - `command`, `args`, `env` (`stdio`): how to start the server.
   - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it.
-  - `auth` (`http`, optional): `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed. OAuth login is not supported yet.
+  - `auth` (`http`, optional), one of:
+    - `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed.
+    - `type: oauth` and optional `scopes`: sign in through the browser with `mcph auth login <server>` (see [OAuth login](#oauth-login)).
   - `primary`: optional `true` for the server you are developing (at most one).
 
 `stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.

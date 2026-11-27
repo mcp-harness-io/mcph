@@ -8,6 +8,7 @@ from mcph.config import (
     Config,
     ConfigError,
     HttpServerConfig,
+    OAuthAuthConfig,
     StdioServerConfig,
     load_config,
 )
@@ -444,20 +445,30 @@ def test_a_token_cannot_be_written_into_the_config(tmp_path):
     assert "servers[0].auth.token: Extra inputs are not permitted" in message
 
 
-def test_auth_needs_a_type_and_a_variable_name(tmp_path):
+def test_auth_needs_a_type(tmp_path):
     message = error_for(
         tmp_path,
         "servers:\n  - {name: d, transport: http, url: 'http://x/mcp', auth: {}}\n",
     )
 
-    assert "servers[0].auth.type: Field required" in message
+    assert "servers[0].auth.type: Field required (bearer or oauth)" in message
+
+
+def test_bearer_auth_needs_a_variable_name(tmp_path):
+    message = error_for(
+        tmp_path,
+        "servers:\n"
+        "  - {name: d, transport: http, url: 'http://x/mcp', auth: {type: bearer}}\n",
+    )
+
     assert "servers[0].auth.token_env: Field required" in message
+    assert ".bearer." not in message  # pydantic's union tag is not a YAML key
 
 
-def test_only_bearer_auth_is_supported_for_now(tmp_path):
-    message = error_for(tmp_path, HTTP_WITH_AUTH.replace("type: bearer", "type: oauth"))
+def test_unknown_auth_types_are_rejected(tmp_path):
+    message = error_for(tmp_path, HTTP_WITH_AUTH.replace("type: bearer", "type: kerberos"))
 
-    assert "servers[0].auth.type: Input should be 'bearer'" in message
+    assert "servers[0].auth.type: Input should be 'bearer' or 'oauth'" in message
 
 
 @pytest.mark.parametrize("name", ["1TOKEN", "MY-TOKEN", "my token", "$TOKEN", ""])
@@ -475,4 +486,51 @@ def test_stdio_servers_have_no_auth_setting(tmp_path):
     )
 
     assert "servers[0].auth: Extra inputs are not permitted" in message
+
+
+# --- oauth ---------------------------------------------------------------------------------
+
+
+def oauth_server(auth: str) -> str:
+    return f"servers:\n  - {{name: d, transport: http, url: 'http://x/mcp', auth: {auth}}}\n"
+
+
+def test_http_server_can_sign_in_with_oauth(tmp_path):
+    config = load(tmp_path, oauth_server("{type: oauth}"))
+
+    assert config.servers[0].auth == OAuthAuthConfig(type="oauth", scopes=[])
+
+
+def test_oauth_can_ask_for_scopes(tmp_path):
+    config = load(tmp_path, oauth_server("{type: oauth, scopes: [api.read, api.write]}"))
+
+    assert config.servers[0].auth.scopes == ["api.read", "api.write"]
+
+
+@pytest.mark.parametrize("scope", ["'a b'", "''", "' '", '"x\\ty"'])
+def test_scopes_must_be_words(tmp_path, scope):
+    message = error_for(tmp_path, oauth_server(f"{{type: oauth, scopes: [{scope}]}}"))
+
+    assert "servers[0].auth.scopes: each scope must be a non-empty word" in message
+    assert ".oauth." not in message  # pydantic's union tag is not a YAML key
+
+
+def test_scopes_must_be_strings(tmp_path):
+    message = error_for(tmp_path, oauth_server("{type: oauth, scopes: [5]}"))
+
+    assert "servers[0].auth.scopes[0]: Input should be a valid string" in message
+
+
+def test_oauth_does_not_take_a_token_variable(tmp_path):
+    message = error_for(tmp_path, oauth_server("{type: oauth, token_env: TOKEN}"))
+
+    assert "servers[0].auth.token_env: Extra inputs are not permitted" in message
+
+
+def test_bearer_does_not_take_scopes(tmp_path):
+    message = error_for(
+        tmp_path, oauth_server("{type: bearer, token_env: TOKEN, scopes: [a]}")
+    )
+
+    assert "servers[0].auth.scopes: Extra inputs are not permitted" in message
 

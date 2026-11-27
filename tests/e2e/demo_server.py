@@ -10,7 +10,9 @@ E2E_FAIL_ON_START  if set, print an error to stderr and exit before serving
 E2E_STARTUP_DELAY  seconds to sleep before serving
 E2E_TRANSPORT      "http" to serve Streamable HTTP on 127.0.0.1:$E2E_PORT (default: stdio)
 E2E_PORT           port for the http transport
-E2E_AUTH           if set (http only), require a bearer token like an OAuth-protected server;
+E2E_AUTH           http only. "oauth": a complete local OAuth server (registration, sign-in
+                   that approves at once, tokens). Any other value: require one of the
+                   fixed bearer tokens like an OAuth-protected server;
                    valid tokens: e2e-secret-token (scope api.read) and
                    e2e-writer-token (scopes api.read and api.write)
 E2E_REQUIRED_SCOPES  comma-separated scopes a token must have (with E2E_AUTH)
@@ -34,7 +36,19 @@ if os.environ.get("E2E_FAIL_ON_START"):
 time.sleep(float(os.environ.get("E2E_STARTUP_DELAY", "0")))
 
 auth = None
-if os.environ.get("E2E_AUTH"):
+if os.environ.get("E2E_AUTH") == "oauth":
+    from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
+    from mcp.server.auth.settings import ClientRegistrationOptions
+
+    auth = InMemoryOAuthProvider(
+        base_url=f"http://127.0.0.1:{os.environ['E2E_PORT']}",
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=["api.read", "api.write"],
+            default_scopes=["api.read"],
+        ),
+    )
+elif os.environ.get("E2E_AUTH"):
     from fastmcp.server.auth import RemoteAuthProvider
     from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
     from pydantic import AnyHttpUrl
