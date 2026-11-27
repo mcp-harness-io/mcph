@@ -26,6 +26,7 @@ DEFAULT_CONFIG_NAME = "mcph.yaml"
 CONFIG_VERSION = "1"
 
 _SERVER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _TRANSPORTS = ("stdio", "http")
 
 
@@ -63,11 +64,32 @@ class StdioServerConfig(_ServerBase):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+class BearerAuthConfig(_StrictModel):
+    """Send a bearer token that mcph reads from an environment variable.
+
+    The token itself never goes into ``mcph.yaml``: only the variable's name.
+    """
+
+    type: Literal["bearer"]
+    token_env: str
+
+    @field_validator("token_env")
+    @classmethod
+    def _check_token_env(cls, value: str) -> str:
+        if not _ENV_NAME_RE.fullmatch(value):
+            raise ValueError(
+                "must be an environment variable name: letters, digits and '_', "
+                "not starting with a digit"
+            )
+        return value
+
+
 class HttpServerConfig(_ServerBase):
     """A server that is already running and speaks Streamable HTTP."""
 
     transport: Literal["http"]
     url: str
+    auth: BearerAuthConfig | None = None
 
     @field_validator("url")
     @classmethod

@@ -28,6 +28,9 @@ servers:
   - name: docs
     transport: http
     url: http://localhost:8080/mcp
+    auth:                      # optional: send a bearer token
+      type: bearer
+      token_env: DOCS_TOKEN    # name of an environment variable holding the token
 ```
 
 Then check them:
@@ -58,11 +61,11 @@ All servers OK, 1 warning.
 - `mcph doctor --strict` also fails on warnings, which is handy in CI.
 - `mcph doctor` exits with `0` if all servers are OK, `1` if a server failed (or, with `--strict`, if there are warnings), `2` if the config is invalid.
 
-If an `http` server answers 401, doctor says that authentication is required and shows what the server announces: its `WWW-Authenticate` challenge and, when it publishes OAuth protected resource metadata (RFC 9728), its authorization server and scopes. mcph cannot send credentials yet, so such a server still fails the check.
+If an `http` server refuses mcph, doctor says why instead of a generic error: no token was sent (401), the token was rejected (with the server's `error`, its explanation and the scope it asks for), or the token lacks a scope (403). It also shows what the server announces about its OAuth setup when it publishes protected resource metadata (RFC 9728): its authorization server and scopes.
 
 ```console
 docs
-  ERROR  authentication required: the server answered 401 (mcph cannot send credentials yet)
+  ERROR  authentication required: the server answered 401 (send a bearer token with `auth` in mcph.yaml)
          challenge: Bearer resource_metadata="http://localhost:8080/.well-known/oauth-protected-resource/mcp"
          authorization server: https://auth.example.com/
          scopes: api.read, api.write
@@ -85,7 +88,8 @@ Warnings do not fail the run unless you pass `--strict`.
   - `name`: unique; letters, digits, `_` and `-`.
   - `transport`: `stdio` or `http`.
   - `command`, `args`, `env` (`stdio`): how to start the server.
-  - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it, and it cannot send credentials yet.
+  - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it.
+  - `auth` (`http`, optional): `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed. OAuth login is not supported yet.
   - `primary`: optional `true` for the server you are developing (at most one).
 
 `stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.

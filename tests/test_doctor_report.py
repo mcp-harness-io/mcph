@@ -320,3 +320,54 @@ def test_a_401_without_a_challenge_header_says_so():
 
     assert "         challenge: none (the 401 had no WWW-Authenticate header)" in text
     assert "no OAuth protected resource metadata found" in text
+
+
+def test_a_refused_token_is_listed_field_by_field():
+    error = ServerError(
+        "the server rejected the token in $DOCS_TOKEN (HTTP 401)",
+        auth=AuthInfo(
+            challenge='Bearer error="invalid_token", scope="api.write"',
+            metadata_url="http://h/prm",
+            authorization_servers=("https://auth.example.com/",),
+            scopes=("api.read", "api.write"),
+            error="invalid_token",
+            error_description="The token expired",
+            required_scope="api.write",
+        ),
+    )
+
+    text = format_report(DoctorReport((ServerReport("docs", error=error),)))
+
+    assert text == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "docs",
+            "  ERROR  the server rejected the token in $DOCS_TOKEN (HTTP 401)",
+            "         error: invalid_token",
+            "         server says: The token expired",
+            "         scope the server asks for: api.write",
+            "         metadata: http://h/prm",
+            "         authorization server: https://auth.example.com/",
+            "         scopes: api.read, api.write",
+            "",
+            "1 of 1 server failed.",
+        ]
+    )
+
+
+def test_the_raw_challenge_is_left_out_when_its_parts_are_listed():
+    text = format_report(
+        auth_report(challenge='Bearer error="insufficient_scope"', error="insufficient_scope")
+    )
+
+    assert "         error: insufficient_scope" in text
+    assert "challenge:" not in text
+    assert "no OAuth protected resource metadata found" in text
+
+
+def test_a_403_without_a_challenge_says_so():
+    text = format_report(auth_report(challenge=None, status=403, error=None))
+
+    assert "challenge: none (the 403 had no WWW-Authenticate header)" in text
+
