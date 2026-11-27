@@ -1,15 +1,18 @@
+import asyncio
+
 import pytest
 
-from mcph.rules import Finding, Severity, run_rules
+from mcph.rules import Finding, Severity, run_rule
 from mcph.rules.builtin.tool_name_snake_case import TOOL_NAME_SNAKE_CASE, to_snake_case
 
 
 @pytest.fixture
-def check(snapshot_with):
+def check(context_with):
     """Run only this rule against a server that has tools with the given names."""
 
     def run(*tool_names: str) -> list[Finding]:
-        return run_rules(snapshot_with(*tool_names), [TOOL_NAME_SNAKE_CASE])
+        result = asyncio.run(run_rule(TOOL_NAME_SNAKE_CASE, context_with(*tool_names)))
+        return list(result.findings)
 
     return run
 

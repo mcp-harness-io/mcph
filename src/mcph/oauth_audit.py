@@ -1,10 +1,11 @@
-"""Check the OAuth setup that an HTTP server announces.
+"""Look up and check the OAuth setup that an HTTP server announces.
 
 A server that needs authentication announces an authorization server in its
 protected resource metadata (RFC 9728). Whether a client can really sign in
 depends on that server's own metadata (RFC 8414, or OpenID Connect discovery).
-These checks read it with plain unauthenticated requests, never sending any
-credential, and report what would stop a client.
+The lookup uses plain unauthenticated requests, never sending any credential,
+and the checks report what would stop a client. The ``oauth.*`` rules in
+:mod:`mcph.rules.builtin.oauth` use these functions.
 """
 
 from __future__ import annotations
@@ -18,18 +19,12 @@ from mcp.client.auth.utils import (
     issuers_match,
 )
 
-from mcph.auth_probe import AuthInfo
-from mcph.rules import Finding, RuleResult, Severity
-from mcph.rules.builtin.oauth import (
-    ISSUER,
-    METADATA,
-    OAUTH_RULES,
-    PKCE,
-    REGISTRATION,
-)
+from mcph.rules import Finding, Severity
 
-NO_AUTHORIZATION_SERVER = "the server announced no authorization server"
-NO_METADATA = "the authorization server's metadata was not found"
+METADATA = "oauth.metadata"
+ISSUER = "oauth.issuer"
+PKCE = "oauth.pkce"
+REGISTRATION = "oauth.registration"
 
 
 @dataclass(frozen=True)
@@ -189,50 +184,4 @@ def _issuer_finding(announced: str, issuer: str, slash_accepted: bool) -> Findin
         f"{said}; they differ only by a trailing slash, which strict clients "
         "refuse (RFC 8414); set `ignore_issuer_trailing_slash: true` under `auth` "
         "to have mcph accept it",
-    )
-
-
-async def audit_authorization_server(
-    auth: AuthInfo,
-    resource_url: str,
-    *,
-    timeout: float,
-    issuer_slash_accepted: bool = False,
-    transport: httpx2.AsyncBaseTransport | None = None,
-) -> tuple[RuleResult, ...]:
-    """Check the authorization server a server announced in what it told us.
-
-    Gives one result per ``oauth.*`` rule. Like a client, it looks at the first
-    authorization server announced; if there is none, or its metadata cannot be
-    found, the checks that need it are skipped.
-    """
-    if not auth.authorization_servers:
-        return tuple(
-            RuleResult.skipped(rule.id, NO_AUTHORIZATION_SERVER)
-            for rule in OAUTH_RULES
-        )
-    announced = auth.authorization_servers[0]
-    discovery = await discover_metadata(
-        announced, resource_url, timeout=timeout, transport=transport
-    )
-    findings = check_metadata(
-        announced, discovery, issuer_slash_accepted=issuer_slash_accepted
-    )
-    return tuple(
-        _result(rule.id, findings, metadata_found=discovery.metadata is not None)
-        for rule in OAUTH_RULES
-    )
-
-
-def _result(
-    rule_id: str, findings: list[Finding], *, metadata_found: bool
-) -> RuleResult:
-    # Without the metadata only whether it can be found has been checked.
-    if not metadata_found and rule_id != METADATA:
-        return RuleResult.skipped(rule_id, NO_METADATA)
-    return RuleResult(
-        rule_id,
-        findings=tuple(
-            finding for finding in findings if finding.rule_id == rule_id
-        ),
     )

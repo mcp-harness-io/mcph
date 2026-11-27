@@ -7,20 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mcph.auth_probe import AuthInfo
-from mcph.config import Config, HttpServerConfig, OAuthAuthConfig, ServerConfig
+from mcph.config import Config
 from mcph.mcp_client import (
     DEFAULT_TIMEOUT_SECONDS,
     ServerError,
     ServerSnapshot,
     snapshot_server,
 )
-from mcph.oauth_audit import audit_authorization_server
 from mcph.rules import (
-    BUILTIN_RULES,
-    OAUTH_RULES,
     Finding,
     Outcome,
     Rule,
+    RuleContext,
     RuleInfo,
     RuleResult,
     Severity,
@@ -28,10 +26,7 @@ from mcph.rules import (
     is_off,
     run_rule,
 )
-
-# Why rules were skipped when the rule itself has no say in it.
-NO_CONNECTION = "mcph could not connect to the server"
-NOT_NEEDED = "not needed, the server accepted the connection"
+from mcph.rules.builtin import BUILTIN_RULES
 
 
 @dataclass(frozen=True)
@@ -88,10 +83,11 @@ async def run_doctor(
 ) -> DoctorReport:
     """Check every server in ``config``, one after another.
 
-    Each server that starts is also checked against ``rules``. A failing server
-    does not stop the others from being checked. The ``doctor.rules`` settings of
-    the config decide which rules run and how serious their findings are, and the
-    report says what happened to every rule.
+    Each server is checked against the ``rules`` that are about its kind of server;
+    a rule that needs the server is skipped if it could not be reached. A failing
+    server does not stop the others from being checked. The ``doctor.rules``
+    settings of the config decide which rules run and how serious their findings
+    are, and the report says what happened to every rule.
     """
     settings = config.doctor.rules
     rules = tuple(rules)
@@ -104,9 +100,11 @@ async def run_doctor(
             )
         except ServerError as exc:
             error = exc
+        context = RuleContext(server, timeout, snapshot=snapshot, error=error)
         results = [
-            *_snapshot_results(snapshot, rules, settings),
-            *await _oauth_results(server, error, timeout, settings),
+            await _result(rule, context, settings)
+            for rule in rules
+            if rule.applies_to(server)
         ]
         reports.append(
             ServerReport(
@@ -116,57 +114,12 @@ async def run_doctor(
     return DoctorReport(tuple(reports))
 
 
-def _snapshot_results(
-    snapshot: ServerSnapshot | None, rules: Iterable[Rule], settings: Mapping[str, str]
-) -> list[RuleResult]:
-    """The rules that look at what a server exposes, run on its snapshot."""
-    results = []
-    for rule in rules:
-        if is_off(rule.id, settings):  # it does not run
-            results.append(RuleResult.off(rule.id))
-        elif snapshot is None:
-            results.append(RuleResult.skipped(rule.id, NO_CONNECTION))
-        else:
-            results.append(apply_rule_settings(run_rule(rule, snapshot), settings))
-    return results
-
-
-async def _oauth_results(
-    server: ServerConfig,
-    error: ServerError | None,
-    timeout: float,
-    settings: Mapping[str, str],
-) -> list[RuleResult]:
-    """The OAuth checks, which are about HTTP servers only."""
-    if not isinstance(server, HttpServerConfig):
-        return []
-    if all(is_off(rule.id, settings) for rule in OAUTH_RULES):
-        return [RuleResult.off(rule.id) for rule in OAUTH_RULES]  # nothing to ask
-    return [
-        apply_rule_settings(result, settings)
-        for result in await _audit(server, error, timeout)
-    ]
-
-
-async def _audit(
-    server: HttpServerConfig, error: ServerError | None, timeout: float
-) -> tuple[RuleResult, ...]:
-    """What the OAuth checks make of a server, as if none of them were turned off."""
-    if error is None:
-        return _skipped_oauth_rules(NOT_NEEDED)
-    if error.auth is None:
-        return _skipped_oauth_rules(NO_CONNECTION)
-    accepted = (
-        isinstance(server.auth, OAuthAuthConfig)
-        and server.auth.ignore_issuer_trailing_slash
-    )
-    return await audit_authorization_server(
-        error.auth, server.url, timeout=timeout, issuer_slash_accepted=accepted
-    )
-
-
-def _skipped_oauth_rules(reason: str) -> tuple[RuleResult, ...]:
-    return tuple(RuleResult.skipped(rule.id, reason) for rule in OAUTH_RULES)
+async def _result(
+    rule: Rule, context: RuleContext, settings: Mapping[str, str]
+) -> RuleResult:
+    if is_off(rule.id, settings):  # it does not run
+        return RuleResult.off(rule.id)
+    return apply_rule_settings(await run_rule(rule, context), settings)
 
 
 def format_report(report: DoctorReport, *, config_path: Path | None = None) -> str:

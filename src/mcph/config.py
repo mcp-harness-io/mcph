@@ -24,8 +24,6 @@ from pydantic import (
     field_validator,
 )
 
-from mcph.rules import known_rules
-
 DEFAULT_CONFIG_NAME = "mcph.yaml"
 CONFIG_VERSION = "1"
 
@@ -160,6 +158,9 @@ class DoctorConfig(_StrictModel):
     @field_validator("rules")
     @classmethod
     def _check_rule_ids(cls, rules: dict[str, RuleSetting]) -> dict[str, RuleSetting]:
+        # Imported here: the built-in rules import this module.
+        from mcph.rules.builtin import known_rules
+
         known = list(known_rules())
         unknown = [rule_id for rule_id in rules if rule_id not in known]
         if unknown:

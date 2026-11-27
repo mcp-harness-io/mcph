@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
 
-from mcph.rules.base import Rule, Severity
-
-if TYPE_CHECKING:
-    from mcph.mcp_client import ServerSnapshot
+from mcph.rules.base import Rule, RuleContext, Severity
 
 # Lowercase letters and digits, words separated by single underscores.
 _SNAKE_CASE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
@@ -23,8 +19,9 @@ def to_snake_case(name: str) -> str:
     return re.sub(r"_+", "_", name).strip("_").lower()
 
 
-def _tool_names_are_snake_case(snapshot: ServerSnapshot) -> Iterator[str]:
-    for tool in snapshot.tools:
+def _tool_names_are_snake_case(context: RuleContext) -> Iterator[str]:
+    assert context.snapshot is not None  # the rule needs the server to have connected
+    for tool in context.snapshot.tools:
         if _SNAKE_CASE.fullmatch(tool.name):
             continue
         message = f"tool {tool.name!r} is not snake_case"

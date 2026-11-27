@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mcph.cli import app
-from mcph.rules import known_rules
+from mcph.rules.builtin import known_rules
 
 runner = CliRunner()
 
