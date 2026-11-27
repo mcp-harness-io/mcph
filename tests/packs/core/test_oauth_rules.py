@@ -6,21 +6,18 @@ from mcph.auth_probe import AuthInfo
 from mcph.config import HttpServerConfig, OAuthAuthConfig
 from mcph.mcp_client import ServerError
 from mcph.oauth_audit import Discovery
-from mcph.rules import Outcome, RuleContext, RuleResult, Severity, run_rule
-from mcph.rules.base import NO_CONNECTION
-from mcph.rules.builtin import oauth as oauth_rules
-from mcph.rules.builtin.oauth import (
-    NO_AUTHORIZATION_SERVER,
-    NO_METADATA,
-    NOT_NEEDED,
-    OAUTH_RULES,
-)
+from mcph.rules import NO_CONNECTION, Outcome, RuleContext, RuleResult, Severity, run_rule
+
+# What the user sees as the reason of a skipped check.
+NOT_NEEDED = "not needed, the server accepted the connection"
+NO_AUTHORIZATION_SERVER = "the server announced no authorization server"
+NO_METADATA = "the authorization server's metadata was not found"
 
 TIMEOUT = 7.0
 RESOURCE = "https://rs.test/mcp"
 ANNOUNCED = "https://as.test"
 METADATA_URL = "https://as.test/.well-known/oauth-authorization-server"
-OAUTH_IDS = [rule.id for rule in OAUTH_RULES]
+OAUTH_IDS = ["oauth.metadata", "oauth.issuer", "oauth.pkce", "oauth.registration"]
 
 GOOD = {
     "issuer": ANNOUNCED,
@@ -51,14 +48,16 @@ class Lookups:
 
 
 @pytest.fixture
-def lookups(monkeypatch):
+def lookups(monkeypatch, core_rules):
     lookups = Lookups()
 
     async def fake(announced, resource_url, *, timeout, transport=None):
         lookups.calls.append((announced, resource_url, timeout))
         return lookups.discovery
 
-    monkeypatch.setattr(oauth_rules, "discover_metadata", fake)
+    # The rules look the function up in the namespace of the file that defines them.
+    namespace = core_rules["oauth.metadata"].check.__globals__
+    monkeypatch.setitem(namespace, "discover_metadata", fake)
     return lookups
 
 
@@ -78,11 +77,18 @@ def refused(*authorization_servers: str, **auth) -> RuleContext:
     return RuleContext(server(**auth), TIMEOUT, error=error)
 
 
-def check(context: RuleContext) -> dict[str, RuleResult]:
-    async def run_all():
-        return {rule.id: await run_rule(rule, context) for rule in OAUTH_RULES}
+@pytest.fixture
+def check(core_rules):
+    """Run the four oauth.* rules on a context and give their results by rule id."""
+    rules = [core_rules[rule_id] for rule_id in OAUTH_IDS]
 
-    return asyncio.run(run_all())
+    def run(context: RuleContext) -> dict[str, RuleResult]:
+        async def run_all():
+            return {rule.id: await run_rule(rule, context) for rule in rules}
+
+        return asyncio.run(run_all())
+
+    return run
 
 
 def findings_of(results: dict[str, RuleResult]) -> list:
@@ -90,7 +96,7 @@ def findings_of(results: dict[str, RuleResult]) -> list:
 
 
 def test_nothing_is_looked_up_for_a_server_that_accepted_the_connection(
-    lookups, snapshot_with
+    lookups, snapshot_with, check
 ):
     context = RuleContext(server(), TIMEOUT, snapshot=snapshot_with("get_x"))
 
@@ -100,7 +106,7 @@ def test_nothing_is_looked_up_for_a_server_that_accepted_the_connection(
     assert lookups.calls == []
 
 
-def test_nothing_is_looked_up_when_the_server_did_not_say_anything_about_auth(lookups):
+def test_nothing_is_looked_up_when_the_server_did_not_say_anything_about_auth(lookups, check):
     context = RuleContext(server(), TIMEOUT, error=ServerError("connection refused"))
 
     results = check(context)
@@ -109,7 +115,7 @@ def test_nothing_is_looked_up_when_the_server_did_not_say_anything_about_auth(lo
     assert lookups.calls == []
 
 
-def test_nothing_is_looked_up_when_no_authorization_server_was_announced(lookups):
+def test_nothing_is_looked_up_when_no_authorization_server_was_announced(lookups, check):
     results = check(refused())
 
     assert results == {
@@ -118,26 +124,26 @@ def test_nothing_is_looked_up_when_no_authorization_server_was_announced(lookups
     assert lookups.calls == []
 
 
-def test_a_sound_authorization_server_passes_every_check(lookups):
+def test_a_sound_authorization_server_passes_every_check(lookups, check):
     results = check(refused(ANNOUNCED))
 
     assert results == {rule_id: RuleResult(rule_id) for rule_id in OAUTH_IDS}
     assert all(result.outcome is Outcome.RAN for result in results.values())
 
 
-def test_the_authorization_server_is_looked_up_once_for_all_four_rules(lookups):
+def test_the_authorization_server_is_looked_up_once_for_all_four_rules(lookups, check):
     check(refused(ANNOUNCED))
 
     assert lookups.calls == [(ANNOUNCED, RESOURCE, TIMEOUT)]
 
 
-def test_the_first_announced_authorization_server_is_the_one_checked(lookups):
+def test_the_first_announced_authorization_server_is_the_one_checked(lookups, check):
     check(refused(ANNOUNCED, "https://other.test"))
 
     assert [call[0] for call in lookups.calls] == [ANNOUNCED]
 
 
-def test_each_finding_is_in_the_result_of_its_own_rule(lookups):
+def test_each_finding_is_in_the_result_of_its_own_rule(lookups, check):
     lookups.finds(code_challenge_methods_supported=None, registration_endpoint=None)
 
     results = check(refused(ANNOUNCED))
@@ -150,7 +156,7 @@ def test_each_finding_is_in_the_result_of_its_own_rule(lookups):
     assert [f.severity for f in results["oauth.registration"].findings] == [Severity.WARN]
 
 
-def test_a_trailing_slash_difference_keeps_its_own_severity(lookups):
+def test_a_trailing_slash_difference_keeps_its_own_severity(lookups, check):
     lookups.finds(issuer="https://as.test")  # announced with a slash, says it has none
 
     results = check(refused("https://as.test/"))
@@ -160,7 +166,7 @@ def test_a_trailing_slash_difference_keeps_its_own_severity(lookups):
     assert "set `ignore_issuer_trailing_slash: true`" in finding.message
 
 
-def test_the_trailing_slash_setting_of_the_server_is_passed_on(lookups):
+def test_the_trailing_slash_setting_of_the_server_is_passed_on(lookups, check):
     lookups.finds(issuer="https://as.test")
 
     [finding] = check(refused("https://as.test/", ignore_issuer_trailing_slash=True))[
@@ -170,7 +176,7 @@ def test_the_trailing_slash_setting_of_the_server_is_passed_on(lookups):
     assert "makes mcph accept" in finding.message
 
 
-def test_a_server_without_oauth_settings_gets_the_strict_default(lookups):
+def test_a_server_without_oauth_settings_gets_the_strict_default(lookups, check):
     lookups.finds(issuer="https://as.test")
     info = AuthInfo(challenge=None, authorization_servers=("https://as.test/",))
     plain = HttpServerConfig(name="docs", transport="http", url=RESOURCE)
@@ -181,7 +187,7 @@ def test_a_server_without_oauth_settings_gets_the_strict_default(lookups):
     assert "set `ignore_issuer_trailing_slash: true`" in finding.message
 
 
-def test_without_metadata_only_finding_it_is_checked_and_the_other_checks_are_skipped(lookups):
+def test_without_metadata_only_finding_it_is_checked_and_the_other_checks_are_skipped(lookups, check):
     lookups.finds_nothing()
 
     results = check(refused(ANNOUNCED))
@@ -195,7 +201,7 @@ def test_without_metadata_only_finding_it_is_checked_and_the_other_checks_are_sk
     ]
 
 
-def test_every_finding_comes_from_the_rule_that_reports_it(lookups):
+def test_every_finding_comes_from_the_rule_that_reports_it(lookups, check):
     lookups.finds(
         authorization_endpoint=None,
         issuer="https://evil.test",

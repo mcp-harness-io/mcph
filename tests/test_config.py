@@ -214,7 +214,7 @@ def test_top_level_must_be_a_mapping(tmp_path):
     assert "list" in message
 
 
-@pytest.mark.parametrize("key", ["extends", "gateway", "eval", "typo"])
+@pytest.mark.parametrize("key", ["gateway", "eval", "typo"])
 def test_unknown_top_level_key_is_rejected(tmp_path, key):
     message = error_for(tmp_path, MINIMAL + f"{key}: {{}}\n")
 
@@ -400,13 +400,13 @@ def test_all_problems_are_reported_together(tmp_path):
     message = error_for(
         tmp_path,
         """\
-        extends: []
+        typo: []
         servers:
           - {name: "bad name", transport: stdio, command: ""}
         """,
     )
 
-    assert "extends: Extra inputs are not permitted" in message
+    assert "typo: Extra inputs are not permitted" in message
     assert "servers[0].name:" in message
     assert "servers[0].command:" in message
 
@@ -616,40 +616,6 @@ def test_a_rule_setting_must_be_error_warn_or_off(tmp_path, value):
     assert message.endswith("doctor.rules.oauth.pkce: Input should be 'error', 'warn' or 'off'")
 
 
-def test_an_unknown_rule_is_reported_with_a_suggestion_and_the_known_rules(tmp_path):
-    message = error_for(
-        tmp_path, MINIMAL + "doctor:\n  rules:\n    core.tool_name_snakecase: warn\n"
-    )
-
-    assert message.splitlines()[1:] == [
-        "  doctor.rules: unknown rule 'core.tool_name_snakecase' "
-        "(did you mean 'core.tool_name_snake_case'?); known rules: "
-        "core.tool_name_snake_case, oauth.metadata, oauth.issuer, oauth.pkce, "
-        "oauth.registration"
-    ]
-
-
-def test_an_unknown_rule_that_resembles_nothing_gets_no_suggestion(tmp_path):
-    message = error_for(tmp_path, MINIMAL + "doctor:\n  rules:\n    zzz: warn\n")
-
-    assert "unknown rule 'zzz'; known rules: " in message
-    assert "did you mean" not in message
-
-
-def test_every_unknown_rule_is_named_at_once(tmp_path):
-    message = error_for(
-        tmp_path,
-        MINIMAL
-        + "doctor:\n  rules:\n    oauth.pkse: off\n    zzz: warn\n    oauth.pkce: error\n",
-    )
-
-    assert message.splitlines()[1:] == [
-        "  doctor.rules: unknown rules 'oauth.pkse' (did you mean 'oauth.pkce'?), 'zzz'; "
-        "known rules: core.tool_name_snake_case, oauth.metadata, oauth.issuer, oauth.pkce, "
-        "oauth.registration"
-    ]
-
-
 def test_rules_must_be_a_mapping(tmp_path):
     message = error_for(tmp_path, MINIMAL + "doctor:\n  rules: [oauth.pkce]\n")
 
@@ -669,3 +635,45 @@ def test_doctor_settings_can_be_built_in_code():
     )
 
     assert config.doctor.rules == {"oauth.pkce": "off"}
+
+
+# --- extends ---------------------------------------------------------------------------------
+
+
+def test_a_config_without_extends_extends_nothing(tmp_path):
+    assert load(tmp_path, MINIMAL).extends == []
+
+
+def test_extends_lists_the_pack_sources_in_order(tmp_path):
+    config = load(tmp_path, MINIMAL + "extends:\n  - builtin:core\n  - ./packs/acme\n")
+
+    assert config.extends == ["builtin:core", "./packs/acme"]
+
+
+def test_a_rule_id_in_the_settings_is_not_checked_when_the_file_is_read(tmp_path):
+    # Which ids exist depends on the packs, which are loaded afterwards.
+    config = load(tmp_path, MINIMAL + "doctor:\n  rules:\n    acme.anything: warn\n")
+
+    assert config.doctor.rules == {"acme.anything": "warn"}
+
+
+@pytest.mark.parametrize("source", ['""', '"   "'])
+def test_a_pack_source_must_not_be_empty(tmp_path, source):
+    message = error_for(tmp_path, MINIMAL + f"extends:\n  - {source}\n")
+
+    assert message.endswith("extends: a pack source must not be empty")
+
+
+def test_a_pack_source_must_not_be_listed_twice(tmp_path):
+    message = error_for(tmp_path, MINIMAL + "extends:\n  - ./packs/a\n  - ./packs/a\n")
+
+    assert message.endswith("extends: './packs/a' is listed twice")
+
+
+def test_extends_must_be_a_list_of_strings(tmp_path):
+    assert error_for(tmp_path, MINIMAL + "extends: ./packs/acme\n").endswith(
+        "extends: Input should be a valid list"
+    )
+    assert error_for(tmp_path, MINIMAL + "extends:\n  - 5\n").endswith(
+        "extends[0]: Input should be a valid string"
+    )

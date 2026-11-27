@@ -5,7 +5,7 @@ protected resource metadata (RFC 9728). Whether a client can really sign in
 depends on that server's own metadata (RFC 8414, or OpenID Connect discovery).
 The lookup uses plain unauthenticated requests, never sending any credential,
 and the checks report what would stop a client. The ``oauth.*`` rules in
-:mod:`mcph.rules.builtin.oauth` use these functions.
+core pack use these functions.
 """
 
 from __future__ import annotations

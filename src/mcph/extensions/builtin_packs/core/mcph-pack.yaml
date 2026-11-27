@@ -1,0 +1,6 @@
+name: core
+version: "1.0.0"
+description: The rules that ship with mcph.
+rules:
+  - rules/tool_name_snake_case.py
+  - rules/oauth.py

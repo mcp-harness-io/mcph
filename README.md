@@ -18,6 +18,9 @@ uvx mcph --help     # or run it without installing
 Describe your MCP servers in a `mcph.yaml` in your project: `stdio` servers that mcph starts for you, and `http` servers that are already running.
 
 ```yaml
+extends:
+  - builtin:core               # the rules that ship with mcph (without a pack there is no rule)
+
 servers:
   - name: orders
     transport: stdio
@@ -50,7 +53,7 @@ docs
 All servers OK, 1 warning.
 ```
 
-Under each server doctor lists every rule: `OK` ran and found nothing, `WARN` or `ERROR` found a problem, `OFF` is turned off in `mcph.yaml`, and `SKIP` could not run or was not needed (skipped rules with the same reason share one line). To make a rule fail the run instead, or to switch it off, add a `doctor` section to the same file:
+`extends` lists the packs whose rules doctor uses; `builtin:core` is the pack that ships with mcph (see [Rules and packs](#rules-and-packs)). Under each server doctor lists every rule: `OK` ran and found nothing, `WARN` or `ERROR` found a problem, `OFF` is turned off in `mcph.yaml`, and `SKIP` could not run or was not needed (skipped rules with the same reason share one line). To make a rule fail the run instead, or to switch it off, add a `doctor` section to the same file:
 
 ```yaml
 doctor:
@@ -64,8 +67,8 @@ See [Configuring rules](#configuring-rules) for the details.
 
 | Command | What it does |
 |---|---|
-| `mcph doctor run` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports what each rule found. |
-| `mcph doctor rules` | Lists every rule with its severity: the default, or the setting from `doctor.rules` in `mcph.yaml`. It starts no server. |
+| `mcph doctor run` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the rules of the packs under `extends` and reports what each rule found. |
+| `mcph doctor rules` | Lists the rules of the packs under `extends` with their severity: the default, or the setting from `doctor.rules` in `mcph.yaml`. It starts no server. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet: `proxy` is planned for 0.3.0 and `eval` for 0.4.0. |
@@ -101,7 +104,7 @@ Doctor also checks the OAuth setup the server announces (for an `auth: {type: oa
 | `oauth.pkce` | error | PKCE with `S256` is advertised. |
 | `oauth.registration` | warning | Dynamic client registration is offered. |
 
-Each of these is a rule you can configure (see [Configuring rules](#configuring-rules)).
+These rules are in the `core` pack, and you can configure each of them (see [Rules and packs](#rules-and-packs) and [Configuring rules](#configuring-rules)).
 
 ## OAuth login
 
@@ -121,9 +124,21 @@ Tokens are kept in a file only you can read, under mcph's state directory (set `
 
 If login stops with `Authorization server metadata issuer mismatch`, the server announces its authorization server differently from the way that server describes itself. The standard wants the two to be identical, so the right fix is on the server. When the only difference is a trailing slash (`https://auth.example.com/` against `https://auth.example.com`), you can have mcph accept it with `ignore_issuer_trailing_slash: true` under `auth`. It tolerates that one difference and nothing else.
 
-## Rules
+## Rules and packs
 
-`mcph doctor run` checks every server that starts against these built-in rules:
+Rules come from **packs**. A pack is a directory with a `mcph-pack.yaml` that lists the Python files defining its rules. Name the packs doctor should use under `extends` in `mcph.yaml`:
+
+```yaml
+extends:
+  - builtin:core      # the rules that ship with mcph
+  - ./packs/acme      # a pack of your own, relative to the directory of mcph.yaml
+```
+
+A source is a directory (relative to the directory of `mcph.yaml`, absolute, or starting with `~`) or `builtin:<name>` for a pack bundled with mcph. **Without any pack there is no rule**: `mcph doctor run` then only reaches the servers and warns about it, and the warning fails a `--strict` run.
+
+### The core pack
+
+`builtin:core` has the `oauth.*` checks described above and this rule:
 
 | Rule | Severity | Checks |
 |---|---|---|
@@ -131,9 +146,47 @@ If login stops with `Authorization server metadata issuer mismatch`, the server 
 
 Warnings do not fail the run unless you pass `--strict`.
 
+### Writing a pack
+
+```
+packs/acme/
+  mcph-pack.yaml
+  rules/no_delete.py
+```
+
+```yaml
+# mcph-pack.yaml
+name: acme
+version: "1.0.0"
+description: Our checks.        # optional
+rules:
+  - rules/no_delete.py          # the files that define rules
+```
+
+```python
+# rules/no_delete.py
+from mcph.extensions import doctor_rule
+
+@doctor_rule(id="acme.no_delete", description="No tool deletes data.", severity="error")
+def no_delete(context):
+    return [
+        f"{tool.name} deletes data"
+        for tool in context.snapshot.tools
+        if tool.name.startswith("delete")
+    ]
+```
+
+- A rule id looks like `namespace.name` (lowercase letters, digits and `_`, and `-` in the namespace) and is unique across all packs. Two packs with the same name are an error too.
+- The function gets a context: `server` (the entry of `mcph.yaml`), `snapshot` (what the server exposes: `server_name`, `server_version`, `protocol_version`, `startup_seconds` and `tools`, each with a `name` and a `description`; `None` if mcph could not connect), `error` (why it could not), `timeout`, and a `cache` shared by the rules that check one server.
+- It returns a message for each problem, at the rule's severity, or `Issue(message, severity)` objects (from `mcph.rules`) to choose the severity per problem. It may be `async`, and it may raise `SkipRule("why")` (from `mcph.rules`) when there is nothing to check.
+- `@doctor_rule` also takes `transports=["http"]` for a rule that only applies to HTTP servers (the default is both kinds), and `needs_connection=False` for a rule that is still useful when the server could not be reached (without it, such a rule is skipped, because there is no snapshot).
+- A rule that raises is reported as an error finding, and the other rules still run.
+- A pack file is imported on its own, so it can import `mcph` and installed packages but not the other files of the pack.
+- **The Python of a pack runs with your privileges**, like the `command` of a `stdio` server in the same file, so list only packs you trust.
+
 ### Configuring rules
 
-Under `doctor.rules` in `mcph.yaml`, set how serious a rule is, or turn it off. This applies to the rule above and to the `oauth.*` checks, by rule id:
+Under `doctor.rules` in `mcph.yaml`, set how serious a rule is, or turn it off. This applies to the rules of every loaded pack, by rule id:
 
 ```yaml
 doctor:
@@ -148,22 +201,26 @@ doctor:
 
 Rules you do not list keep their default severity. A configured severity replaces the default for all findings of that rule, so `oauth.issuer: error` also makes a trailing-slash difference an error. With all four `oauth.*` checks off, doctor does not contact an authorization server at all.
 
-A rule id that does not exist is a config error (exit code `2`) that lists the known ids and suggests the closest one.
+A rule id that no loaded pack defines is a config error (exit code `2`) that lists the known ids and suggests the closest one. (Without `extends` no rule is known, and the message says how to add the core pack.)
 
-`mcph doctor rules` lists every rule with the setting that applies, and the default next to one you changed. It starts no server:
+`mcph doctor rules` lists the rules of the loaded packs, under the pack each comes from, with the setting that applies and the default next to one you changed. It starts no server:
 
 ```console
 $ mcph doctor rules
 Rules (settings from /path/to/mcph.yaml)
 
+core (builtin:core)
   core.tool_name_snake_case  error (default: warn)  Tool names are snake_case.
   oauth.metadata             error                  The authorization server's metadata can be found and has an authorization and a token endpoint.
   oauth.issuer               error                  The metadata's issuer is the authorization server the resource announced (a difference of only a trailing slash is a warning).
   oauth.pkce                 error                  PKCE with S256 is advertised.
   oauth.registration         off (default: warn)    Dynamic client registration is offered.
+
+acme (./packs/acme)
+  acme.no_delete             error                  No tool deletes data.
 ```
 
-Without a `mcph.yaml` in the current directory it shows the defaults. A `-c` path that does not exist, or an invalid config, is an error (exit code `2`).
+Without a `mcph.yaml` in the current directory, or without `extends`, no pack is loaded and the listing says so. A `-c` path that does not exist, a pack that cannot be loaded, or an invalid config is an error (exit code `2`).
 
 ## mcph.yaml
 
@@ -177,6 +234,7 @@ Without a `mcph.yaml` in the current directory it shows the defaults. A `-c` pat
     - `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed.
     - `type: oauth`, optional `scopes` and optional `ignore_issuer_trailing_slash`: sign in through the browser with `mcph auth login <server>` (see [OAuth login](#oauth-login)).
   - `primary`: optional `true` for the server you are developing (at most one).
+- `extends`: optional list of the packs whose rules doctor uses: a directory or `builtin:<name>` (see [Rules and packs](#rules-and-packs)). Without any pack there is no rule; `builtin:core` has the rules that ship with mcph.
 - `doctor`: optional settings for `mcph doctor`.
   - `rules`: how serious each rule is, as `rule id: error | warn | off` (see [Configuring rules](#configuring-rules)).
 

@@ -6,10 +6,8 @@ servers that mcph starts itself, and ``http`` servers that are already running.
 
 from __future__ import annotations
 
-import difflib
 import os
 import re
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -146,7 +144,9 @@ class DoctorConfig(_StrictModel):
     rules: dict[str, RuleSetting] = Field(default_factory=dict)
     """How serious each rule is: ``error``, ``warn`` or ``off``.
 
-    Rules that are not listed keep their default severity."""
+    Rules that are not listed keep their default severity. The ids are checked
+    against the rules of the loaded packs, not when the file is read (see
+    :func:`mcph.extensions.load_extensions`)."""
 
     @field_validator("rules", mode="before")
     @classmethod
@@ -154,18 +154,6 @@ class DoctorConfig(_StrictModel):
         if not isinstance(rules, dict):
             return rules  # validation reports it
         return {rule_id: _normalize_setting(value) for rule_id, value in rules.items()}
-
-    @field_validator("rules")
-    @classmethod
-    def _check_rule_ids(cls, rules: dict[str, RuleSetting]) -> dict[str, RuleSetting]:
-        # Imported here: the built-in rules import this module.
-        from mcph.rules.builtin import known_rules
-
-        known = list(known_rules())
-        unknown = [rule_id for rule_id in rules if rule_id not in known]
-        if unknown:
-            raise ValueError(_unknown_rules_message(unknown, known))
-        return rules
 
 
 def _normalize_setting(value: object) -> object:
@@ -175,23 +163,15 @@ def _normalize_setting(value: object) -> object:
     return value.lower() if isinstance(value, str) else value
 
 
-def _unknown_rules_message(unknown: Iterable[str], known: list[str]) -> str:
-    named = []
-    for rule_id in unknown:
-        text = repr(rule_id)
-        closest = difflib.get_close_matches(rule_id, known, n=1)
-        if closest:
-            text += f" (did you mean {closest[0]!r}?)"
-        named.append(text)
-    noun = "rule" if len(named) == 1 else "rules"
-    return f"unknown {noun} {', '.join(named)}; known rules: {', '.join(known)}"
-
-
 class Config(_StrictModel):
     """The contents of ``mcph.yaml``."""
 
     version: Literal["1"] = CONFIG_VERSION
     servers: list[ServerConfig] = Field(min_length=1)
+    extends: list[str] = Field(default_factory=list)
+    """The packs whose rules doctor uses: directories, or ``builtin:<name>``.
+
+    Without any pack there is no rule."""
     doctor: DoctorConfig = Field(default_factory=DoctorConfig)
 
     _path: Path | None = PrivateAttr(default=None)
@@ -203,6 +183,18 @@ class Config(_StrictModel):
         if isinstance(value, int) and not isinstance(value, bool):
             return str(value)
         return value
+
+    @field_validator("extends")
+    @classmethod
+    def _check_extends(cls, sources: list[str]) -> list[str]:
+        seen: set[str] = set()
+        for source in sources:
+            if not source.strip():
+                raise ValueError("a pack source must not be empty")
+            if source in seen:
+                raise ValueError(f"{source!r} is listed twice")
+            seen.add(source)
+        return sources
 
     @field_validator("servers")
     @classmethod
