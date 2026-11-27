@@ -48,6 +48,16 @@ docs
 All servers OK, 1 warning.
 ```
 
+The `WARN` line comes from a rule. To make a rule fail the run instead, or to switch it off, add a `doctor` section to the same file:
+
+```yaml
+doctor:
+  rules:
+    core.tool_name_snake_case: error   # or warn, or off
+```
+
+See [Configuring rules](#configuring-rules) for the details.
+
 ## Commands
 
 | Command | What it does |
