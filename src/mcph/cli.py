@@ -1,5 +1,6 @@
 # src/mcph/cli.py
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TypeGuard
@@ -17,7 +18,14 @@ from mcph.config import (
     load_config,
 )
 from mcph.doctor import format_report, format_rules, run_doctor
-from mcph.extensions import Registry, load_extensions
+from mcph.extensions import (
+    Registry,
+    format_packs,
+    format_verification,
+    load_extensions,
+    load_packs,
+    verify_pack,
+)
 from mcph.mcp_client import DEFAULT_TIMEOUT_SECONDS
 from mcph.oauth_login import DEFAULT_LOGIN_TIMEOUT_SECONDS, LoginError
 from mcph.oauth_login import login as sign_in
@@ -110,6 +118,52 @@ def rules(ctx: typer.Context) -> None:
         return
     registry = _load_extensions_or_exit(config)
     typer.echo(format_rules(registry.packs, config.doctor.rules, config_path=config.path))
+
+
+pack_app = typer.Typer(
+    help="Inspect and check the packs that add rules.", no_args_is_help=True
+)
+app.add_typer(pack_app, name="pack")
+
+
+@pack_app.command("list")
+def list_packs(ctx: typer.Context) -> None:
+    """List the packs under `extends` with the rules each one defines.
+
+    Without a mcph.yaml in the current directory no pack is loaded.
+    """
+    config = _load_config_if_present(ctx)
+    if config is None:
+        typer.echo(format_packs([], config_path=None))
+        return
+    try:
+        registry = load_packs(config)
+    except ConfigError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(format_packs(registry.packs, config_path=config.path))
+
+
+@pack_app.command()
+def verify(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=False,
+            help="The directory of the pack (the one with mcph-pack.yaml).",
+        ),
+    ] = Path("."),
+) -> None:
+    """Check a pack: its manifest, its rule files and the rules they define.
+
+    This imports the rule files, so it runs the Python of the pack. Exits with 1
+    if the pack has problems (all of them are listed), and with 2 if PATH is not
+    a directory.
+    """
+    report = verify_pack(Path(os.path.abspath(path)))
+    typer.echo(format_verification(report, path=str(path)))
+    raise typer.Exit(1 if report.problems else 0)
 
 
 auth_app = typer.Typer(

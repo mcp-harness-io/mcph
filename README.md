@@ -69,6 +69,8 @@ See [Configuring rules](#configuring-rules) for the details.
 |---|---|
 | `mcph doctor run` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the rules of the packs under `extends` and reports what each rule found. |
 | `mcph doctor rules` | Lists the rules of the packs under `extends` with their severity: the default, or the setting from `doctor.rules` in `mcph.yaml`. It starts no server. |
+| `mcph pack list` | Lists the packs under `extends` with the rules each one defines. |
+| `mcph pack verify [PATH]` | Checks a pack directory (default `.`): its manifest, its rule files and the rules they define. It lists every problem and exits with `1` if there are any. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet: `proxy` is planned for 0.3.0 and `eval` for 0.4.0. |
@@ -136,6 +138,25 @@ extends:
 
 A source is a directory (relative to the directory of `mcph.yaml`, absolute, or starting with `~`) or `builtin:<name>` for a pack bundled with mcph. **Without any pack there is no rule**: `mcph doctor run` then only reaches the servers and warns about it, and the warning fails a `--strict` run.
 
+`mcph pack list` shows the packs that are loaded and the rules each one defines:
+
+```console
+$ mcph pack list
+Packs (from /path/to/mcph.yaml)
+
+core 1.0.0 (builtin:core)
+  The rules that ship with mcph.
+  core.tool_name_snake_case
+  oauth.metadata
+  oauth.issuer
+  oauth.pkce
+  oauth.registration
+
+acme 1.0.0 (./packs/acme)
+  Our checks.
+  acme.no_delete
+```
+
 ### The core pack
 
 `builtin:core` has the `oauth.*` checks described above and this rule:
@@ -183,6 +204,19 @@ def no_delete(context):
 - A rule that raises is reported as an error finding, and the other rules still run.
 - A pack file is imported on its own, so it can import `mcph` and installed packages but not the other files of the pack.
 - **The Python of a pack runs with your privileges**, like the `command` of a `stdio` server in the same file, so list only packs you trust.
+
+While you write a pack, `mcph pack verify packs/acme` checks it without a config or a server: the manifest, that every listed file exists, imports and defines rules, and that rule ids are not used twice. It lists every problem (and exits with `1`), or the rules it found:
+
+```console
+$ mcph pack verify packs/acme
+acme 1.0.0: valid, 1 rule
+  acme.no_delete  error  No tool deletes data.
+
+$ mcph pack verify packs/other
+packs/other: 2 problems
+  pack 'other': rules/missing.py, listed under rules in mcph-pack.yaml, does not exist
+  pack 'other': cannot import broken.py: SyntaxError: invalid syntax (broken.py, line 1)
+```
 
 ### Configuring rules
 

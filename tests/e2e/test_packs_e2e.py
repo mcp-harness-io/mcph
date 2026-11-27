@@ -1,7 +1,10 @@
 """End-to-end tests: ``mcph doctor`` with packs of rules, from the config to the report."""
 
 import re
+import subprocess
+import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -203,3 +206,55 @@ def test_a_setting_for_a_rule_that_no_loaded_pack_defines_is_a_config_error(proj
     assert "doctor.rules: unknown rule 'core.tool_name_snake_case': no rule is loaded; add a pack" in (
         result.output
     )
+
+
+# --- the work of a pack author -----------------------------------------------------------------
+
+
+def test_an_author_verifies_a_pack_fixes_it_and_then_uses_it(project, write_pack):
+    pack = write_pack(rule_source="def broken(:\n")
+    project.write_config(
+        project.demo_server("orders", tools="get_order,delete_order"),
+        extends=["./packs/acme"],
+    )
+
+    broken = project.mcph("pack", "verify", str(pack))
+    assert broken.exit_code == 1, broken.output
+    assert "cannot import rules.py: SyntaxError" in broken.output
+    assert project.doctor().exit_code == 2  # doctor refuses to run with a pack that does not load
+
+    (pack / "rules" / "rules.py").write_text(textwrap.dedent(NO_DELETE))
+    fixed = project.mcph("pack", "verify", str(pack))
+    assert fixed.exit_code == 0, fixed.output
+    assert fixed.output.splitlines()[0] == "acme 1.0.0: valid, 1 rule"
+
+    listed = project.mcph("pack", "list")
+    assert "acme 1.0.0 (./packs/acme)" in listed.output
+    assert "  acme.no_delete" in listed.output
+
+    used = project.doctor()
+    assert used.exit_code == 0, used.output
+    assert "  WARN   acme.no_delete: delete_order deletes data" in used.output
+
+
+def test_the_pack_commands_work_from_the_installed_console_script(project, write_pack):
+    script = Path(sys.executable).parent / "mcph"
+    if not script.exists():
+        pytest.skip("mcph console script is not installed next to the interpreter")
+    pack = write_pack()
+    project.write_config(project.demo_server("orders"), extends=["builtin:core", "./packs/acme"])
+
+    verified = subprocess.run(
+        [str(script), "pack", "verify", str(pack)], capture_output=True, text=True, timeout=60
+    )
+    listed = subprocess.run(
+        [str(script), "-c", str(project.config_path), "pack", "list"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert verified.returncode == 0, verified.stdout + verified.stderr
+    assert "acme 1.0.0: valid, 1 rule" in verified.stdout
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    assert "core 1.0.0 (builtin:core)" in listed.stdout and "acme 1.0.0 (./packs/acme)" in listed.stdout
