@@ -7,8 +7,8 @@ help: ## Show available targets
 setup: ## Install dependencies (including dev group)
 	uv sync
 
-test: ## Run the test suite with coverage
-	uv run pytest
+test: ## Run the test suite (no coverage)
+	uv run pytest --no-cov
 
 coverage: ## Run tests and open the HTML coverage report
 	uv run pytest --cov-report=html
