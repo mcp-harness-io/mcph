@@ -13,7 +13,7 @@ dependencies = [
     "fastmcp-slim[client]>=4.2,<5",
     "pydantic>=2.7",
     "pyyaml>=6.0.1",
-    "typer>=0.15.0",
+    "typer>=0.16.0",
 ]
 
 [project.scripts]
