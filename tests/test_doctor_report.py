@@ -5,6 +5,7 @@ from mcph import doctor
 from mcph.config import Config, ServerConfig
 from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
+from mcph.rules import Finding, Rule, Severity
 
 
 def snapshot(
@@ -128,3 +129,106 @@ def test_run_doctor_checks_every_server_in_order_and_survives_failures(monkeypat
     assert [server.ok for server in report.servers] == [True, False, True]
     assert report.servers[1].error.message == "boom"
     assert calls == [(name, config.base_dir, 7) for name in ("first", "broken", "last")]
+
+
+WARNING = Finding(
+    "core.tool_name_snake_case",
+    Severity.WARN,
+    "tool 'getOrder' is not snake_case (try 'get_order')",
+)
+
+
+def test_findings_are_listed_under_their_server():
+    report = DoctorReport(
+        (ServerReport("orders", snapshot=snapshot(), findings=(WARNING,)),)
+    )
+
+    assert format_report(report) == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "orders",
+            "  OK     started in 312 ms (orders-server 1.2.3, MCP 2026-07-28), 2 tools",
+            "  WARN   core.tool_name_snake_case: tool 'getOrder' is not snake_case"
+            " (try 'get_order')",
+            "",
+            "All servers OK, 1 warning.",
+        ]
+    )
+
+
+def test_summary_counts_warnings_and_failed_servers_together():
+    two_warnings = (WARNING, WARNING)
+    report = DoctorReport(
+        (
+            ServerReport("a", snapshot=snapshot(), findings=two_warnings),
+            ServerReport("b", error=ServerError("boom")),
+        )
+    )
+
+    text = format_report(report)
+
+    assert text.endswith("1 of 2 servers failed, 2 warnings.")
+
+
+def test_error_findings_fail_the_server_and_are_labelled_error():
+    problem = Finding("acme.rule", Severity.ERROR, "something is wrong")
+    report = DoctorReport(
+        (ServerReport("orders", snapshot=snapshot(), findings=(problem,)),)
+    )
+
+    text = format_report(report)
+
+    assert not report.ok
+    assert "  ERROR  acme.rule: something is wrong" in text
+    assert text.endswith("1 of 1 server failed.")
+
+
+def test_passed_treats_warnings_as_failures_only_when_strict():
+    clean = DoctorReport((ServerReport("a", snapshot=snapshot()),))
+    warned = DoctorReport((ServerReport("a", snapshot=snapshot(), findings=(WARNING,)),))
+    broken = DoctorReport((ServerReport("a", error=ServerError("boom")),))
+
+    assert clean.passed() and clean.passed(strict=True)
+    assert warned.warning_count == 1
+    assert warned.passed() and not warned.passed(strict=True)
+    assert not broken.passed() and not broken.passed(strict=True)
+
+
+def test_run_doctor_applies_the_builtin_rules_by_default(monkeypatch):
+    async def fake_snapshot(server, *, cwd, timeout):
+        return snapshot(tools=("get_order", "getShipment"))
+
+    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
+    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+
+    report = asyncio.run(run_doctor(config))
+
+    [finding] = report.servers[0].findings
+    assert finding.rule_id == "core.tool_name_snake_case"
+    assert "'getShipment'" in finding.message
+
+
+def test_run_doctor_can_use_other_rules(monkeypatch):
+    async def fake_snapshot(server, *, cwd, timeout):
+        return snapshot()
+
+    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
+    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+    rule = Rule("acme.always", "", Severity.WARN, lambda snap: [f"{len(snap.tools)} tools"])
+
+    report = asyncio.run(run_doctor(config, rules=[rule]))
+
+    assert report.servers[0].findings == (Finding("acme.always", Severity.WARN, "2 tools"),)
+
+
+def test_servers_that_failed_to_start_are_not_checked_against_rules(monkeypatch):
+    async def fake_snapshot(server, *, cwd, timeout):
+        raise ServerError("boom")
+
+    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
+    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+
+    report = asyncio.run(run_doctor(config))
+
+    assert report.servers[0].findings == ()

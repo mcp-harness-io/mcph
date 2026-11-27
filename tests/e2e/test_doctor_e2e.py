@@ -27,6 +27,47 @@ def test_healthy_server_is_reported_ok(project):
         r"OK +started in \d+ ms \(e2e-server 9\.9\.9, MCP \S+\), 3 tools", result.output
     )
     assert "All servers OK." in result.output
+    assert "WARN" not in result.output
+
+
+def test_non_snake_case_tool_names_are_warned_about(project):
+    project.write_config(
+        project.demo_server("orders", tools="get_order,getShipment,List-Invoices")
+    )
+
+    result = project.doctor()
+
+    assert result.exit_code == 0, result.output  # warnings alone do not fail the run
+    assert re.search(r"OK +started in \d+ ms .*, 3 tools", result.output)
+    assert (
+        "WARN   core.tool_name_snake_case: "
+        "tool 'getShipment' is not snake_case (try 'get_shipment')"
+    ) in result.output
+    assert (
+        "WARN   core.tool_name_snake_case: "
+        "tool 'List-Invoices' is not snake_case (try 'list_invoices')"
+    ) in result.output
+    assert "'get_order'" not in result.output
+    assert "All servers OK, 2 warnings." in result.output
+
+
+def test_strict_turns_warnings_into_a_failing_exit_code(project):
+    project.write_config(project.demo_server("orders", tools="get_order,getShipment"))
+
+    result = project.doctor("--strict")
+
+    assert result.exit_code == 1, result.output
+    assert "tool 'getShipment' is not snake_case" in result.output
+    assert "All servers OK, 1 warning." in result.output
+
+
+def test_strict_passes_when_there_are_no_warnings(project):
+    project.write_config(project.demo_server("orders", tools="get_order,list_orders"))
+
+    result = project.doctor("--strict")
+
+    assert result.exit_code == 0, result.output
+    assert "All servers OK." in result.output
 
 
 def test_server_is_stopped_after_the_check(project, tmp_path, wait_until_gone):
