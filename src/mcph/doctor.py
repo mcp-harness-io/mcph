@@ -11,7 +11,7 @@ from mcph.mcp_client import (
     DEFAULT_TIMEOUT_SECONDS,
     ServerError,
     ServerSnapshot,
-    snapshot_stdio_server,
+    snapshot_server,
 )
 from mcph.rules import BUILTIN_RULES, Finding, Rule, Severity, run_rules
 
@@ -71,7 +71,7 @@ async def run_doctor(
     reports: list[ServerReport] = []
     for server in config.servers:
         try:
-            snapshot = await snapshot_stdio_server(
+            snapshot = await snapshot_server(
                 server, cwd=config.base_dir, timeout=timeout
             )
         except ServerError as exc:
@@ -125,7 +125,8 @@ def _describe(snapshot: ServerSnapshot) -> str:
     if snapshot.protocol_version:
         details.append(f"MCP {snapshot.protocol_version}")
 
-    text = f"started in {round(snapshot.startup_seconds * 1000)} ms"
+    verb = "connected" if snapshot.transport == "http" else "started"
+    text = f"{verb} in {round(snapshot.startup_seconds * 1000)} ms"
     if details:
         text += f" ({', '.join(details)})"
     return f"{text}, {_plural(len(snapshot.tools), 'tool')}"

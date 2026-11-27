@@ -8,6 +8,8 @@ E2E_VERSION        server version to report (default: 9.9.9)
 E2E_PID_FILE       file to write the server's process id to
 E2E_FAIL_ON_START  if set, print an error to stderr and exit before serving
 E2E_STARTUP_DELAY  seconds to sleep before serving
+E2E_TRANSPORT      "http" to serve Streamable HTTP on 127.0.0.1:$E2E_PORT (default: stdio)
+E2E_PORT           port for the http transport
 """
 
 import os
@@ -39,4 +41,12 @@ def register(tool_name: str) -> None:
 for name in os.environ.get("E2E_TOOLS", "get_order,list_orders").split(","):
     register(name.strip())
 
-mcp.run(show_banner=False)
+if os.environ.get("E2E_TRANSPORT") == "http":
+    mcp.run(
+        transport="http",
+        host="127.0.0.1",
+        port=int(os.environ["E2E_PORT"]),
+        show_banner=False,
+    )
+else:
+    mcp.run(show_banner=False)

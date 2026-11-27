@@ -1,5 +1,7 @@
 import os
 import shutil
+import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +44,11 @@ class Project:
             "env": {f"E2E_{key.upper()}": str(value) for key, value in options.items()},
         }
 
+    @staticmethod
+    def http_entry(name: str, url: str) -> dict:
+        """A ``servers`` entry for an already running HTTP server."""
+        return {"name": name, "transport": "http", "url": url}
+
     def write_config(self, *servers: dict) -> Path:
         self.config_path.write_text(yaml.safe_dump({"servers": list(servers)}))
         return self.config_path
@@ -80,3 +87,71 @@ def wait_until_gone():
         return False
 
     return wait
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def start_http_server(project: Project, tmp_path: Path):
+    """Return a function that starts the demo server over HTTP and gives its URL.
+
+    Keyword options are passed like for ``Project.demo_server``. Every server
+    started this way is stopped when the test ends.
+    """
+    processes: list[tuple[subprocess.Popen, object]] = []
+
+    def start(**options: object) -> str:
+        port = free_port()
+        env = {**os.environ, "E2E_TRANSPORT": "http", "E2E_PORT": str(port)}
+        env.update({f"E2E_{key.upper()}": str(value) for key, value in options.items()})
+        log_path = tmp_path / f"http-server-{port}.log"
+        log = log_path.open("w")
+        process = subprocess.Popen(
+            [sys.executable, "server.py"],
+            cwd=project.root,
+            env=env,
+            stdout=log,
+            stderr=log,
+        )
+        processes.append((process, log))
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                pytest.fail(f"demo server exited early:\n{log_path.read_text()}")
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                return f"http://127.0.0.1:{port}/mcp"
+            except OSError:
+                time.sleep(0.05)
+        pytest.fail(f"demo server did not listen in time:\n{log_path.read_text()}")
+
+    yield start
+
+    for process, log in processes:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        log.close()
+
+
+@pytest.fixture
+def closed_port_url() -> str:
+    """URL of a port that nothing is listening on."""
+    return f"http://127.0.0.1:{free_port()}/mcp"
+
+
+@pytest.fixture
+def silent_server_url():
+    """URL of a TCP server that accepts connections but never answers."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        yield f"http://127.0.0.1:{sock.getsockname()[1]}/mcp"

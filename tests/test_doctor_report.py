@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from mcph import doctor
-from mcph.config import Config, ServerConfig
+from mcph.config import Config, StdioServerConfig
 from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
 from mcph.rules import Finding, Rule, Severity
@@ -15,6 +15,7 @@ def snapshot(
     protocol="2026-07-28",
     seconds=0.3124,
     tools=("get_order", "list_orders"),
+    transport="stdio",
 ) -> ServerSnapshot:
     return ServerSnapshot(
         server_name=name,
@@ -22,6 +23,7 @@ def snapshot(
         protocol_version=protocol,
         startup_seconds=seconds,
         tools=tuple(ToolInfo(tool) for tool in tools),
+        transport=transport,
     )
 
 
@@ -115,10 +117,10 @@ def test_run_doctor_checks_every_server_in_order_and_survives_failures(monkeypat
             raise ServerError("boom")
         return snapshot()
 
-    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
     config = Config(
         servers=[
-            ServerConfig(name=name, transport="stdio", command="x")
+            StdioServerConfig(name=name, transport="stdio", command="x")
             for name in ("first", "broken", "last")
         ]
     )
@@ -199,8 +201,8 @@ def test_run_doctor_applies_the_builtin_rules_by_default(monkeypatch):
     async def fake_snapshot(server, *, cwd, timeout):
         return snapshot(tools=("get_order", "getShipment"))
 
-    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
-    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+    config = Config(servers=[StdioServerConfig(name="orders", transport="stdio", command="x")])
 
     report = asyncio.run(run_doctor(config))
 
@@ -213,8 +215,8 @@ def test_run_doctor_can_use_other_rules(monkeypatch):
     async def fake_snapshot(server, *, cwd, timeout):
         return snapshot()
 
-    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
-    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+    config = Config(servers=[StdioServerConfig(name="orders", transport="stdio", command="x")])
     rule = Rule("acme.always", "", Severity.WARN, lambda snap: [f"{len(snap.tools)} tools"])
 
     report = asyncio.run(run_doctor(config, rules=[rule]))
@@ -226,9 +228,20 @@ def test_servers_that_failed_to_start_are_not_checked_against_rules(monkeypatch)
     async def fake_snapshot(server, *, cwd, timeout):
         raise ServerError("boom")
 
-    monkeypatch.setattr(doctor, "snapshot_stdio_server", fake_snapshot)
-    config = Config(servers=[ServerConfig(name="orders", transport="stdio", command="x")])
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+    config = Config(servers=[StdioServerConfig(name="orders", transport="stdio", command="x")])
 
     report = asyncio.run(run_doctor(config))
 
     assert report.servers[0].findings == ()
+
+
+def test_http_servers_are_connected_to_not_started():
+    report = DoctorReport(
+        (ServerReport("docs", snapshot=snapshot(transport="http", seconds=0.087)),)
+    )
+
+    text = format_report(report)
+
+    assert "  OK     connected in 87 ms (orders-server 1.2.3, MCP 2026-07-28), 2 tools" in text
+    assert "started" not in text
