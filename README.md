@@ -68,7 +68,7 @@ See [Configuring rules](#configuring-rules) for the details.
 | `mcph doctor rules` | Lists every rule with its severity: the default, or the setting from `doctor.rules` in `mcph.yaml`. It starts no server. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
-| `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
+| `mcph proxy`, `mcph eval` | Placeholders, not implemented yet: `proxy` is planned for 0.3.0 and `eval` for 0.4.0. |
 
 `mcph doctor` is a group of commands: on its own it is an error, so a script that still calls it fails instead of passing without checking anything. `mcph doctor --help` lists its commands.
 
