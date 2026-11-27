@@ -2,28 +2,28 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/mcp-harness-io/mcph/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                                              |    Stmts |     Miss |    Cover |   Missing |
-|-------------------------------------------------- | -------: | -------: | -------: | --------: |
-| src/mcph/\_\_init\_\_.py                          |        1 |        0 |     100% |           |
-| src/mcph/auth\_probe.py                           |       81 |        0 |     100% |           |
-| src/mcph/cli.py                                   |      110 |        0 |     100% |           |
-| src/mcph/config.py                                |      194 |        0 |     100% |           |
-| src/mcph/doctor.py                                |      154 |        0 |     100% |           |
-| src/mcph/extensions/\_\_init\_\_.py               |        4 |        0 |     100% |           |
-| src/mcph/extensions/pack.py                       |       72 |        0 |     100% |           |
-| src/mcph/extensions/registry.py                   |      112 |        0 |     100% |           |
-| src/mcph/extensions/resolver.py                   |       56 |        0 |     100% |           |
-| src/mcph/mcp\_client.py                           |      128 |        0 |     100% |           |
-| src/mcph/oauth\_audit.py                          |       72 |        0 |     100% |           |
-| src/mcph/oauth\_login.py                          |       83 |        0 |     100% |           |
-| src/mcph/rules/\_\_init\_\_.py                    |        3 |        0 |     100% |           |
-| src/mcph/rules/base.py                            |       84 |        0 |     100% |           |
-| src/mcph/rules/builtin/\_\_init\_\_.py            |        7 |        0 |     100% |           |
-| src/mcph/rules/builtin/oauth.py                   |       43 |        0 |     100% |           |
-| src/mcph/rules/builtin/tool\_name\_snake\_case.py |       21 |        0 |     100% |           |
-| src/mcph/rules/settings.py                        |       15 |        0 |     100% |           |
-| src/mcph/token\_store.py                          |       85 |        0 |     100% |           |
-| **TOTAL**                                         | **1325** |    **0** | **100%** |           |
+| Name                                                                     |    Stmts |     Miss |    Cover |   Missing |
+|------------------------------------------------------------------------- | -------: | -------: | -------: | --------: |
+| src/mcph/\_\_init\_\_.py                                                 |        1 |        0 |     100% |           |
+| src/mcph/auth\_probe.py                                                  |       81 |        0 |     100% |           |
+| src/mcph/cli.py                                                          |      119 |        0 |     100% |           |
+| src/mcph/config.py                                                       |      186 |        0 |     100% |           |
+| src/mcph/doctor.py                                                       |      167 |        0 |     100% |           |
+| src/mcph/extensions/\_\_init\_\_.py                                      |        5 |        0 |     100% |           |
+| src/mcph/extensions/builtin\_packs/core/rules/oauth.py                   |       53 |        0 |     100% |           |
+| src/mcph/extensions/builtin\_packs/core/rules/tool\_name\_snake\_case.py |       22 |        0 |     100% |           |
+| src/mcph/extensions/loading.py                                           |       31 |        0 |     100% |           |
+| src/mcph/extensions/pack.py                                              |       72 |        0 |     100% |           |
+| src/mcph/extensions/registry.py                                          |      112 |        0 |     100% |           |
+| src/mcph/extensions/resolver.py                                          |       56 |        0 |     100% |           |
+| src/mcph/mcp\_client.py                                                  |      128 |        0 |     100% |           |
+| src/mcph/oauth\_audit.py                                                 |       72 |        0 |     100% |           |
+| src/mcph/oauth\_login.py                                                 |       83 |        0 |     100% |           |
+| src/mcph/rules/\_\_init\_\_.py                                           |        3 |        0 |     100% |           |
+| src/mcph/rules/base.py                                                   |       84 |        0 |     100% |           |
+| src/mcph/rules/settings.py                                               |       15 |        0 |     100% |           |
+| src/mcph/token\_store.py                                                 |       85 |        0 |     100% |           |
+| **TOTAL**                                                                | **1375** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
