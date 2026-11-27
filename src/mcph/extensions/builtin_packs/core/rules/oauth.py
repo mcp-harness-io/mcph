@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mcph.config import HttpServerConfig, OAuthAuthConfig
+from mcph.extensions import doctor_rule
 from mcph.oauth_audit import (
     ISSUER,
     METADATA,
@@ -19,15 +20,7 @@ from mcph.oauth_audit import (
     check_metadata,
     discover_metadata,
 )
-from mcph.rules.base import (
-    NO_CONNECTION,
-    Finding,
-    Issue,
-    Rule,
-    RuleContext,
-    Severity,
-    SkipRule,
-)
+from mcph.rules import NO_CONNECTION, Finding, Issue, RuleContext, SkipRule
 
 NOT_NEEDED = "not needed, the server accepted the connection"
 NO_AUTHORIZATION_SERVER = "the server announced no authorization server"
@@ -72,42 +65,65 @@ async def _look(context: RuleContext) -> _Lookup:
     return _Lookup(findings=tuple(findings), metadata_found=discovery.metadata is not None)
 
 
-def _oauth_rule(rule_id: str, description: str, severity: Severity) -> Rule:
-    async def check(context: RuleContext) -> list[Issue]:
-        lookup = await _lookup(context)
-        if lookup.skip:
-            raise SkipRule(lookup.skip)
-        if not lookup.metadata_found and rule_id != METADATA:
-            raise SkipRule(NO_METADATA)  # only finding the metadata could be checked
-        return [
-            Issue(finding.message, finding.severity)
-            for finding in lookup.findings
-            if finding.rule_id == rule_id
-        ]
-
-    return Rule(
-        rule_id,
-        description,
-        severity,
-        check,
-        transports=("http",),
-        needs_connection=False,
-    )
+async def _issues(context: RuleContext, rule_id: str) -> list[Issue]:
+    """What the shared lookup found for one rule, or a skip."""
+    lookup = await _lookup(context)
+    if lookup.skip:
+        raise SkipRule(lookup.skip)
+    if not lookup.metadata_found and rule_id != METADATA:
+        raise SkipRule(NO_METADATA)  # only finding the metadata could be checked
+    return [
+        Issue(finding.message, finding.severity)
+        for finding in lookup.findings
+        if finding.rule_id == rule_id
+    ]
 
 
-OAUTH_RULES: tuple[Rule, ...] = (
-    _oauth_rule(
-        METADATA,
+@doctor_rule(
+    id=METADATA,
+    description=(
         "The authorization server's metadata can be found and has an authorization "
-        "and a token endpoint.",
-        Severity.ERROR,
+        "and a token endpoint."
     ),
-    _oauth_rule(
-        ISSUER,
-        "The metadata's issuer is the authorization server the resource announced "
-        "(a difference of only a trailing slash is a warning).",
-        Severity.ERROR,
-    ),
-    _oauth_rule(PKCE, "PKCE with S256 is advertised.", Severity.ERROR),
-    _oauth_rule(REGISTRATION, "Dynamic client registration is offered.", Severity.WARN),
+    severity="error",
+    transports=["http"],
+    needs_connection=False,
 )
+async def metadata(context: RuleContext) -> list[Issue]:
+    return await _issues(context, METADATA)
+
+
+@doctor_rule(
+    id=ISSUER,
+    description=(
+        "The metadata's issuer is the authorization server the resource announced "
+        "(a difference of only a trailing slash is a warning)."
+    ),
+    severity="error",
+    transports=["http"],
+    needs_connection=False,
+)
+async def issuer(context: RuleContext) -> list[Issue]:
+    return await _issues(context, ISSUER)
+
+
+@doctor_rule(
+    id=PKCE,
+    description="PKCE with S256 is advertised.",
+    severity="error",
+    transports=["http"],
+    needs_connection=False,
+)
+async def pkce(context: RuleContext) -> list[Issue]:
+    return await _issues(context, PKCE)
+
+
+@doctor_rule(
+    id=REGISTRATION,
+    description="Dynamic client registration is offered.",
+    severity="warn",
+    transports=["http"],
+    needs_connection=False,
+)
+async def registration(context: RuleContext) -> list[Issue]:
+    return await _issues(context, REGISTRATION)

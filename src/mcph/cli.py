@@ -17,10 +17,10 @@ from mcph.config import (
     load_config,
 )
 from mcph.doctor import format_report, format_rules, run_doctor
+from mcph.extensions import Registry, load_extensions
 from mcph.mcp_client import DEFAULT_TIMEOUT_SECONDS
 from mcph.oauth_login import DEFAULT_LOGIN_TIMEOUT_SECONDS, LoginError
 from mcph.oauth_login import login as sign_in
-from mcph.rules.builtin import known_rules
 from mcph.token_store import TokenStore, TokenStoreError
 
 app = typer.Typer(
@@ -84,28 +84,32 @@ def run(
     """Check that the configured MCP servers respond.
 
     Starts stdio servers and connects to http servers (which must already be
-    running), then checks what each exposes against the built-in rules.
+    running), then checks what each exposes against the rules of the packs under
+    `extends` in mcph.yaml. Without any pack there is no rule.
     Exits with 1 if a server fails (or, with --strict, has warnings), and with 2
     if the config is invalid.
     """
     config = _load_config_or_exit(ctx)
-    report = asyncio.run(run_doctor(config, timeout=timeout))
+    registry = _load_extensions_or_exit(config)
+    report = asyncio.run(run_doctor(config, rules=registry.rules, timeout=timeout))
     typer.echo(format_report(report, config_path=config.path))
     raise typer.Exit(0 if report.passed(strict=strict) else 1)
 
 
 @doctor_app.command()
 def rules(ctx: typer.Context) -> None:
-    """List the rules and the setting of each, without starting any server.
+    """List the rules of the packs under `extends`, without starting any server.
 
     Shows every rule with its severity: the default, or what `doctor.rules` in
     mcph.yaml made of it (the default is shown next to a changed one). Without
-    a mcph.yaml in the current directory it shows the defaults.
+    a mcph.yaml in the current directory no pack is loaded, so there is no rule.
     """
     config = _load_config_if_present(ctx)
-    settings = config.doctor.rules if config is not None else {}
-    path = config.path if config is not None else None
-    typer.echo(format_rules(known_rules().values(), settings, config_path=path))
+    if config is None:
+        typer.echo(format_rules([], {}, config_path=None))
+        return
+    registry = _load_extensions_or_exit(config)
+    typer.echo(format_rules(registry.packs, config.doctor.rules, config_path=config.path))
 
 
 auth_app = typer.Typer(
@@ -198,6 +202,14 @@ def _load_config_or_exit(ctx: typer.Context) -> Config:
     state = ctx.ensure_object(AppState)
     try:
         return load_config(state.config_path)
+    except ConfigError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from None
+
+
+def _load_extensions_or_exit(config: Config) -> Registry:
+    try:
+        return load_extensions(config)
     except ConfigError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from None

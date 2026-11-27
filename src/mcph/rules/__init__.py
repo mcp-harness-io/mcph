@@ -1,8 +1,8 @@
 """Doctor rules: checks of what a server exposes and announces.
 
 ``base`` is the engine and ``settings`` applies the ``doctor.rules`` section of
-``mcph.yaml``. The rules that ship with mcph are in ``mcph.rules.builtin``, which
-is not imported here so that the engine stays free of them.
+``mcph.yaml``. The engine has no rules of its own: they come from packs (see
+:mod:`mcph.extensions`), even the ones that ship with mcph.
 """
 
 from mcph.rules.base import (

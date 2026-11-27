@@ -35,8 +35,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=mcph --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov --cov-report=term-missing --cov-fail-under=90"
 markers = ["e2e: starts real MCP server subprocesses (slower)"]
 
 [tool.coverage.run]
+# By directory, not by package name: the rules of the bundled packs are imported by
+# path (under names outside `mcph.`), so measuring the package `mcph` would miss them.
+source = ["src/mcph"]
 relative_files = true

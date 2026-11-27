@@ -8,6 +8,7 @@ from pathlib import Path
 
 from mcph.auth_probe import AuthInfo
 from mcph.config import Config
+from mcph.extensions import ADD_A_PACK, LoadedPack
 from mcph.mcp_client import (
     DEFAULT_TIMEOUT_SECONDS,
     ServerError,
@@ -26,7 +27,11 @@ from mcph.rules import (
     is_off,
     run_rule,
 )
-from mcph.rules.builtin import BUILTIN_RULES
+
+NO_RULES = (
+    "no rules are loaded, so the servers were only reached, not checked: "
+    f"{ADD_A_PACK}."
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,8 @@ class DoctorReport:
     """The outcome of checking every configured server."""
 
     servers: tuple[ServerReport, ...]
+    warnings: tuple[str, ...] = ()
+    """Warnings about the run as a whole, such as that no rule was loaded."""
 
     @property
     def ok(self) -> bool:
@@ -68,7 +75,7 @@ class DoctorReport:
 
     @property
     def warning_count(self) -> int:
-        return sum(server.warning_count for server in self.servers)
+        return len(self.warnings) + sum(server.warning_count for server in self.servers)
 
     def passed(self, *, strict: bool = False) -> bool:
         """Whether the run succeeded; with ``strict``, warnings count as failures."""
@@ -79,15 +86,17 @@ async def run_doctor(
     config: Config,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    rules: Iterable[Rule] = BUILTIN_RULES,
+    rules: Iterable[Rule] = (),
 ) -> DoctorReport:
     """Check every server in ``config``, one after another.
 
-    Each server is checked against the ``rules`` that are about its kind of server;
-    a rule that needs the server is skipped if it could not be reached. A failing
-    server does not stop the others from being checked. The ``doctor.rules``
-    settings of the config decide which rules run and how serious their findings
-    are, and the report says what happened to every rule.
+    Each server is checked against the ``rules``, which come from the packs the
+    config extends (see :func:`mcph.extensions.load_extensions`); without any rule
+    the servers are only reached, and the report warns about it. A rule is
+    skipped for a server it is not about, or if the server could not be reached.
+    A failing server does not stop the others from being checked. The
+    ``doctor.rules`` settings of the config decide which rules run and how
+    serious their findings are, and the report says what happened to every rule.
     """
     settings = config.doctor.rules
     rules = tuple(rules)
@@ -111,7 +120,7 @@ async def run_doctor(
                 server.name, snapshot=snapshot, error=error, rules=tuple(results)
             )
         )
-    return DoctorReport(tuple(reports))
+    return DoctorReport(tuple(reports), warnings=() if rules else (NO_RULES,))
 
 
 async def _result(
@@ -148,6 +157,9 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
                 )
         lines.extend(_rule_lines(server.rules))
 
+    for warning in report.warnings:
+        lines.extend(["", f"Warning: {warning}"])
+
     failed = sum(1 for server in report.servers if not server.ok)
     summary = (
         f"{failed} of {_plural(count, 'server')} failed" if failed else "All servers OK"
@@ -160,31 +172,47 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
 
 
 def format_rules(
-    rules: Iterable[RuleInfo],
+    packs: Iterable[LoadedPack],
     settings: Mapping[str, str],
     *,
     config_path: Path | None,
 ) -> str:
-    """Render the rules with the setting that applies to each.
+    """Render the rules of the packs, with the setting that applies to each.
 
     ``settings`` is the ``doctor.rules`` section of the config; a rule that is not
     in it has its default severity. ``config_path`` is the file the settings come
     from, or ``None`` if there is none.
     """
+    packs = list(packs)
     if config_path is not None:
         source = f"settings from {config_path}"
     else:
-        source = "default settings: no mcph.yaml in the current directory"
+        source = "no mcph.yaml in the current directory"
     rows = [
-        (rule.id, _setting_text(rule, settings), rule.description) for rule in rules
+        (
+            pack,
+            [
+                (rule.id, _setting_text(rule, settings), rule.description)
+                for rule in pack.rules
+            ],
+        )
+        for pack in packs
     ]
-    id_width = max((len(rule_id) for rule_id, _, _ in rows), default=0)
-    setting_width = max((len(setting) for _, setting, _ in rows), default=0)
-    lines = [f"Rules ({source})", ""]
-    lines.extend(
-        f"  {rule_id:<{id_width}}  {setting:<{setting_width}}  {description}".rstrip()
-        for rule_id, setting, description in rows
-    )
+    every_row = [row for _, pack_rows in rows for row in pack_rows]
+    id_width = max((len(rule_id) for rule_id, _, _ in every_row), default=0)
+    setting_width = max((len(setting) for _, setting, _ in every_row), default=0)
+
+    lines = [f"Rules ({source})"]
+    for pack, pack_rows in rows:
+        lines.extend(["", f"{pack.manifest.name} ({pack.source})"])
+        if not pack_rows:
+            lines.append("  (no rules)")
+        lines.extend(
+            f"  {rule_id:<{id_width}}  {setting:<{setting_width}}  {description}".rstrip()
+            for rule_id, setting, description in pack_rows
+        )
+    if not every_row:
+        lines.extend(["", f"No rules are loaded: {ADD_A_PACK}."])
     return "\n".join(lines)
 
 

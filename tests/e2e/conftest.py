@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -76,9 +77,20 @@ class Project:
             entry["auth"] = {"type": "oauth", **(oauth if isinstance(oauth, dict) else {})}
         return entry
 
-    def write_config(self, *servers: dict, rules: dict[str, str] | None = None) -> Path:
-        """Write ``mcph.yaml``; ``rules`` becomes its ``doctor.rules`` section."""
+    def write_config(
+        self,
+        *servers: dict,
+        rules: dict[str, str] | None = None,
+        extends: Sequence[str] | None = ("builtin:core",),
+    ) -> Path:
+        """Write ``mcph.yaml``.
+
+        ``rules`` becomes its ``doctor.rules`` section. ``extends`` lists the packs
+        whose rules are used (by default the rules that ship with mcph).
+        """
         config: dict = {"servers": list(servers)}
+        if extends:
+            config["extends"] = list(extends)
         if rules is not None:
             config["doctor"] = {"rules": rules}
         self.config_path.write_text(yaml.safe_dump(config))

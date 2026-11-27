@@ -17,16 +17,16 @@ def test_the_rules_are_listed_with_the_settings_of_the_config(project):
 
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
-    assert lines[:2] == [f"Rules (settings from {project.config_path})", ""]
+    assert lines[:3] == [f"Rules (settings from {project.config_path})", "", "core (builtin:core)"]
     assert re.fullmatch(
         r"  core\.tool_name_snake_case  error \(default: warn\)  Tool names are snake_case\.",
-        lines[2],
+        lines[3],
     )
-    assert re.fullmatch(r"  oauth\.metadata +error +The authorization server's .*", lines[3])
+    assert re.fullmatch(r"  oauth\.metadata +error +The authorization server's .*", lines[4])
     assert re.fullmatch(
-        r"  oauth\.registration +off \(default: warn\) +Dynamic client .*", lines[6]
+        r"  oauth\.registration +off \(default: warn\) +Dynamic client .*", lines[7]
     )
-    assert len(lines) == 7
+    assert len(lines) == 8
 
 
 def test_listing_the_rules_starts_no_server(project, tmp_path):

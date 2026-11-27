@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
-from mcph.rules.base import Rule, RuleContext, Severity
+from mcph.extensions import doctor_rule
+from mcph.rules import RuleContext
 
 # Lowercase letters and digits, words separated by single underscores.
 _SNAKE_CASE = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
@@ -19,7 +20,8 @@ def to_snake_case(name: str) -> str:
     return re.sub(r"_+", "_", name).strip("_").lower()
 
 
-def _tool_names_are_snake_case(context: RuleContext) -> Iterator[str]:
+@doctor_rule(id="core.tool_name_snake_case", description="Tool names are snake_case.")
+def tool_names_are_snake_case(context: RuleContext) -> Iterator[str]:
     assert context.snapshot is not None  # the rule needs the server to have connected
     for tool in context.snapshot.tools:
         if _SNAKE_CASE.fullmatch(tool.name):
@@ -29,11 +31,3 @@ def _tool_names_are_snake_case(context: RuleContext) -> Iterator[str]:
         if _SNAKE_CASE.fullmatch(suggestion):
             message += f" (try {suggestion!r})"
         yield message
-
-
-TOOL_NAME_SNAKE_CASE = Rule(
-    id="core.tool_name_snake_case",
-    description="Tool names are snake_case.",
-    severity=Severity.WARN,
-    check=_tool_names_are_snake_case,
-)

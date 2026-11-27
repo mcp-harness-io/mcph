@@ -1,25 +1,46 @@
 import asyncio
+import importlib.util
+import sys
+from pathlib import Path
 
 import pytest
 
+import mcph.extensions
 from mcph.rules import Finding, Severity, run_rule
-from mcph.rules.builtin.tool_name_snake_case import TOOL_NAME_SNAKE_CASE, to_snake_case
+
+CORE = Path(mcph.extensions.__file__).parent / "builtin_packs" / "core"
+
+
+def import_rule_file(stem: str):
+    """Import a rule file of the core pack as a module, to test what it defines besides rules."""
+    spec = importlib.util.spec_from_file_location(f"core_pack_test_{stem}", CORE / "rules" / f"{stem}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+to_snake_case = import_rule_file("tool_name_snake_case").to_snake_case
 
 
 @pytest.fixture
-def check(context_with):
+def rule(core_rules):
+    return core_rules["core.tool_name_snake_case"]
+
+
+@pytest.fixture
+def check(rule, context_with):
     """Run only this rule against a server that has tools with the given names."""
 
     def run(*tool_names: str) -> list[Finding]:
-        result = asyncio.run(run_rule(TOOL_NAME_SNAKE_CASE, context_with(*tool_names)))
-        return list(result.findings)
+        return list(asyncio.run(run_rule(rule, context_with(*tool_names))).findings)
 
     return run
 
 
-def test_the_rule_is_a_warning_by_default():
-    assert TOOL_NAME_SNAKE_CASE.id == "core.tool_name_snake_case"
-    assert TOOL_NAME_SNAKE_CASE.severity is Severity.WARN
+def test_the_rule_is_a_warning_by_default(rule):
+    assert rule.id == "core.tool_name_snake_case"
+    assert rule.severity is Severity.WARN
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,6 @@ import pytest
 
 from mcph.oauth_audit import Discovery, check_metadata, discover_metadata
 from mcph.rules import Finding, Severity
-from mcph.rules.builtin import OAUTH_RULES
 
 RESOURCE = "https://rs.test/mcp"
 ANNOUNCED = "https://as.test"
@@ -184,9 +183,9 @@ def test_every_problem_is_reported_in_a_stable_order():
     ]
 
 
-def test_every_finding_comes_from_a_declared_rule_with_its_default_severity():
-    # `oauth.*` rules are configurable in mcph.yaml, so the audit and the declared rules
-    # must agree on the ids and on how serious each problem is by default.
+def test_every_finding_comes_from_a_rule_of_the_core_pack_with_its_default_severity(core_rules):
+    # `oauth.*` rules are configurable in mcph.yaml, so the checks and the rules of the core
+    # pack must agree on the ids and on how serious each problem is by default.
     broken = changed(
         authorization_endpoint=None,
         issuer="https://evil.test",
@@ -197,7 +196,9 @@ def test_every_finding_comes_from_a_declared_rule_with_its_default_severity():
     findings = check_metadata(ANNOUNCED, found(broken))
 
     assert {f.rule_id: f.severity for f in findings} == {
-        rule.id: rule.severity for rule in OAUTH_RULES
+        rule_id: rule.severity
+        for rule_id, rule in core_rules.items()
+        if rule_id.startswith("oauth.")
     }
 
 

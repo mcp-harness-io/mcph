@@ -10,15 +10,24 @@ from mcph.config import (
     OAuthAuthConfig,
     StdioServerConfig,
 )
-from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
+from mcph.doctor import NO_RULES, DoctorReport, ServerReport, format_report
+from mcph.extensions import load_pack, resolve_pack
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
 from mcph.oauth_audit import Discovery
 from mcph.rules import NO_CONNECTION, Finding, Rule, RuleResult, Severity, SkipRule
-from mcph.rules.builtin import OAUTH_RULES
-from mcph.rules.builtin import oauth as oauth_rules
-from mcph.rules.builtin.oauth import NOT_NEEDED
 
-OAUTH_IDS = [rule.id for rule in OAUTH_RULES]
+OAUTH_IDS = ["oauth.metadata", "oauth.issuer", "oauth.pkce", "oauth.registration"]
+NOT_NEEDED = "not needed, the server accepted the connection"  # as the user sees it
+
+CORE_RULES = load_pack(resolve_pack("builtin:core", Path.cwd())).rules
+# The oauth.* rules look their helpers up in the namespace of the file that defines them.
+OAUTH_NAMESPACE = next(rule for rule in CORE_RULES if rule.id == "oauth.metadata").check.__globals__
+
+
+def run_doctor(config, **kwargs):
+    """``mcph.doctor.run_doctor`` with the rules of the core pack unless others are given."""
+    kwargs.setdefault("rules", CORE_RULES)
+    return doctor.run_doctor(config, **kwargs)
 
 
 def snapshot(
@@ -436,8 +445,8 @@ def failing_with_auth(monkeypatch, auth: AuthInfo | None):
 def audited(findings=()) -> tuple[RuleResult, ...]:
     """What the oauth.* rules answer when the checks find ``findings``."""
     return tuple(
-        RuleResult(rule.id, findings=tuple(f for f in findings if f.rule_id == rule.id))
-        for rule in OAUTH_RULES
+        RuleResult(rule_id, findings=tuple(f for f in findings if f.rule_id == rule_id))
+        for rule_id in OAUTH_IDS
     )
 
 
@@ -456,8 +465,8 @@ def record_audits(monkeypatch, findings=()):
         calls[-1]["accepted"] = issuer_slash_accepted
         return list(findings)
 
-    monkeypatch.setattr(oauth_rules, "discover_metadata", fake_discover)
-    monkeypatch.setattr(oauth_rules, "check_metadata", fake_check)
+    monkeypatch.setitem(OAUTH_NAMESPACE, "discover_metadata", fake_discover)
+    monkeypatch.setitem(OAUTH_NAMESPACE, "check_metadata", fake_check)
     return calls
 
 
@@ -899,3 +908,58 @@ def test_a_rule_only_applies_to_the_kinds_of_server_it_is_about(monkeypatch):
 
     assert [r.rule_id for r in stdio.servers[0].rules] == ["a.everywhere"]
     assert [r.rule_id for r in http.servers[0].rules] == ["a.everywhere", "a.http_only"]
+
+
+# --- a run without any rule -------------------------------------------------------------------
+
+
+def test_without_any_rule_the_servers_are_only_reached_and_the_report_warns(monkeypatch):
+    serving(monkeypatch, "getShipment")
+
+    report = asyncio.run(doctor.run_doctor(stdio_config({})))  # no rules given
+
+    assert report.servers[0].rules == ()
+    assert report.warnings == (NO_RULES,)
+    assert report.warning_count == 1
+    assert report.ok  # a warning, not an error
+    assert not report.passed(strict=True) and report.passed()
+
+
+def test_the_warning_explains_how_to_get_the_rules_that_ship_with_mcph():
+    assert NO_RULES == (
+        "no rules are loaded, so the servers were only reached, not checked: add a pack "
+        "to `extends` in mcph.yaml (`extends: [builtin:core]` has the rules that ship "
+        "with mcph)."
+    )
+
+
+def test_the_report_shows_the_warning_before_the_summary_and_counts_it():
+    report = DoctorReport(
+        (ServerReport("orders", snapshot=snapshot()),), warnings=("something about the run.",)
+    )
+
+    assert format_report(report).splitlines()[-4:] == [
+        "",
+        "Warning: something about the run.",
+        "",
+        "All servers OK, 1 warning.",
+    ]
+
+
+def test_run_level_warnings_are_added_to_the_warnings_of_the_servers():
+    report = DoctorReport(
+        (ServerReport("a", snapshot=snapshot(), rules=reported(WARNING)),),
+        warnings=("one", "two"),
+    )
+
+    assert report.warning_count == 3
+    assert format_report(report).endswith("All servers OK, 3 warnings.")
+
+
+def test_rules_that_are_all_turned_off_are_not_a_missing_pack(monkeypatch):
+    serving(monkeypatch, "get_order")
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"})))
+
+    assert report.warnings == ()
+    assert report.servers[0].rules == (RuleResult.off(SNAKE_CASE),)
