@@ -65,6 +65,7 @@ See [Configuring rules](#configuring-rules) for the details.
 | Command | What it does |
 |---|---|
 | `mcph doctor run` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports what each rule found. |
+| `mcph doctor rules` | Lists every rule with its severity: the default, or the setting from `doctor.rules` in `mcph.yaml`. It starts no server. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
@@ -148,6 +149,21 @@ doctor:
 Rules you do not list keep their default severity. A configured severity replaces the default for all findings of that rule, so `oauth.issuer: error` also makes a trailing-slash difference an error. With all four `oauth.*` checks off, doctor does not contact an authorization server at all.
 
 A rule id that does not exist is a config error (exit code `2`) that lists the known ids and suggests the closest one.
+
+`mcph doctor rules` lists every rule with the setting that applies, and the default next to one you changed. It starts no server:
+
+```console
+$ mcph doctor rules
+Rules (settings from /path/to/mcph.yaml)
+
+  core.tool_name_snake_case  error (default: warn)  Tool names are snake_case.
+  oauth.metadata             error                  The authorization server's metadata can be found and has an authorization and a token endpoint.
+  oauth.issuer               error                  The metadata's issuer is the authorization server the resource announced (a difference of only a trailing slash is a warning).
+  oauth.pkce                 error                  PKCE with S256 is advertised.
+  oauth.registration         off (default: warn)    Dynamic client registration is offered.
+```
+
+Without a `mcph.yaml` in the current directory it shows the defaults. A `-c` path that does not exist, or an invalid config, is an error (exit code `2`).
 
 ## mcph.yaml
 

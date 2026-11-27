@@ -13,12 +13,14 @@ from mcph.config import (
     HttpServerConfig,
     OAuthAuthConfig,
     ServerConfig,
+    default_config_path,
     load_config,
 )
-from mcph.doctor import format_report, run_doctor
+from mcph.doctor import format_report, format_rules, run_doctor
 from mcph.mcp_client import DEFAULT_TIMEOUT_SECONDS
 from mcph.oauth_login import DEFAULT_LOGIN_TIMEOUT_SECONDS, LoginError
 from mcph.oauth_login import login as sign_in
+from mcph.rules import known_rules
 from mcph.token_store import TokenStore, TokenStoreError
 
 app = typer.Typer(
@@ -90,6 +92,20 @@ def run(
     report = asyncio.run(run_doctor(config, timeout=timeout))
     typer.echo(format_report(report, config_path=config.path))
     raise typer.Exit(0 if report.passed(strict=strict) else 1)
+
+
+@doctor_app.command()
+def rules(ctx: typer.Context) -> None:
+    """List the rules and the setting of each, without starting any server.
+
+    Shows every rule with its severity: the default, or what `doctor.rules` in
+    mcph.yaml made of it (the default is shown next to a changed one). Without
+    a mcph.yaml in the current directory it shows the defaults.
+    """
+    config = _load_config_if_present(ctx)
+    settings = config.doctor.rules if config is not None else {}
+    path = config.path if config is not None else None
+    typer.echo(format_rules(known_rules().values(), settings, config_path=path))
 
 
 auth_app = typer.Typer(
@@ -185,6 +201,14 @@ def _load_config_or_exit(ctx: typer.Context) -> Config:
     except ConfigError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from None
+
+
+def _load_config_if_present(ctx: typer.Context) -> Config | None:
+    """The config; ``None`` if none was asked for and ``./mcph.yaml`` does not exist."""
+    state = ctx.ensure_object(AppState)
+    if state.config_path is None and not default_config_path().exists():
+        return None
+    return _load_config_or_exit(ctx)
 
 
 def _uses_oauth(server: ServerConfig) -> TypeGuard[HttpServerConfig]:

@@ -238,13 +238,18 @@ class Config(_StrictModel):
         return next((s for s in self.servers if s.primary), self.servers[0])
 
 
+def default_config_path() -> Path:
+    """Where the config file is looked for when none is given: ``./mcph.yaml``."""
+    return Path.cwd() / DEFAULT_CONFIG_NAME
+
+
 def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     """Read and validate a config file.
 
     ``path`` defaults to ``mcph.yaml`` in the current working directory.
     Raises :class:`ConfigError` with a readable message on any problem.
     """
-    config_path = Path(path) if path is not None else Path.cwd() / DEFAULT_CONFIG_NAME
+    config_path = Path(path) if path is not None else default_config_path()
     try:
         text = config_path.read_text(encoding="utf-8")
     except FileNotFoundError:

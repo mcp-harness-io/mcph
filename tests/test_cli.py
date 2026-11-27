@@ -61,6 +61,7 @@ def test_doctor_is_a_group_and_its_run_command_has_the_options():
 
     assert group.exit_code == 0 and run.exit_code == 0
     assert re.search(r"\brun\b", plain(group.output))
+    assert re.search(r"\brules\b", plain(group.output))
     assert "--timeout" in plain(run.output)
     assert "--strict" in plain(run.output)
 
