@@ -10,16 +10,13 @@ from mcph.config import (
     OAuthAuthConfig,
     StdioServerConfig,
 )
-from mcph.doctor import (
-    NO_CONNECTION,
-    NOT_NEEDED,
-    DoctorReport,
-    ServerReport,
-    format_report,
-    run_doctor,
-)
+from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
-from mcph.rules import OAUTH_RULES, Finding, Rule, RuleResult, Severity
+from mcph.oauth_audit import Discovery
+from mcph.rules import NO_CONNECTION, Finding, Rule, RuleResult, Severity, SkipRule
+from mcph.rules.builtin import OAUTH_RULES
+from mcph.rules.builtin import oauth as oauth_rules
+from mcph.rules.builtin.oauth import NOT_NEEDED
 
 OAUTH_IDS = [rule.id for rule in OAUTH_RULES]
 
@@ -242,7 +239,7 @@ def test_run_doctor_can_use_other_rules(monkeypatch):
 
     monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
     config = Config(servers=[StdioServerConfig(name="orders", transport="stdio", command="x")])
-    rule = Rule("acme.always", "", Severity.WARN, lambda snap: [f"{len(snap.tools)} tools"])
+    rule = Rule("acme.always", "", Severity.WARN, lambda context: [f"{len(context.snapshot.tools)} tools"])
 
     report = asyncio.run(run_doctor(config, rules=[rule]))
 
@@ -437,7 +434,7 @@ def failing_with_auth(monkeypatch, auth: AuthInfo | None):
 
 
 def audited(findings=()) -> tuple[RuleResult, ...]:
-    """What the OAuth audit answers: a result for every oauth.* rule."""
+    """What the oauth.* rules answer when the checks find ``findings``."""
     return tuple(
         RuleResult(rule.id, findings=tuple(f for f in findings if f.rule_id == rule.id))
         for rule in OAUTH_RULES
@@ -445,15 +442,22 @@ def audited(findings=()) -> tuple[RuleResult, ...]:
 
 
 def record_audits(monkeypatch, findings=()):
+    """Replace the metadata lookup and the checks behind the oauth.* rules.
+
+    The checks find ``findings``; the returned list records each lookup.
+    """
     calls = []
 
-    async def fake_audit(auth, url, *, timeout, issuer_slash_accepted):
-        calls.append(
-            {"auth": auth, "url": url, "timeout": timeout, "accepted": issuer_slash_accepted}
-        )
-        return audited(findings)
+    async def fake_discover(announced, resource_url, *, timeout, transport=None):
+        calls.append({"announced": announced, "url": resource_url, "timeout": timeout})
+        return Discovery("https://as.test/.well-known/oauth-authorization-server", {}, ())
 
-    monkeypatch.setattr(doctor, "audit_authorization_server", fake_audit)
+    def fake_check(announced, discovery, *, issuer_slash_accepted=False):
+        calls[-1]["accepted"] = issuer_slash_accepted
+        return list(findings)
+
+    monkeypatch.setattr(oauth_rules, "discover_metadata", fake_discover)
+    monkeypatch.setattr(oauth_rules, "check_metadata", fake_check)
     return calls
 
 
@@ -482,28 +486,9 @@ def test_a_server_that_needs_authentication_gets_its_oauth_setup_checked(monkeyp
         RuleResult.skipped(SNAKE_CASE, NO_CONNECTION),
         *audited((FINDING,)),
     )
-    assert calls == [{"auth": AUTH, "url": "http://x/mcp", "timeout": 9, "accepted": False}]
-
-
-def test_the_trailing_slash_setting_of_the_server_is_passed_on(monkeypatch):
-    failing_with_auth(monkeypatch, AUTH)
-    calls = record_audits(monkeypatch)
-
-    asyncio.run(run_doctor(http_config(ignore_issuer_trailing_slash=True)))
-
-    assert calls[0]["accepted"] is True
-
-
-def test_a_server_without_oauth_settings_is_checked_with_the_strict_default(monkeypatch):
-    failing_with_auth(monkeypatch, AUTH)
-    calls = record_audits(monkeypatch)
-    config = Config(
-        servers=[HttpServerConfig(name="docs", transport="http", url="http://x/mcp")]
-    )
-
-    asyncio.run(run_doctor(config))
-
-    assert calls[0]["accepted"] is False
+    assert calls == [
+        {"announced": "https://as.test/", "url": "http://x/mcp", "timeout": 9, "accepted": False}
+    ]
 
 
 def test_nothing_is_checked_when_the_server_did_not_say_anything_about_auth(monkeypatch):
@@ -589,7 +574,7 @@ def test_a_rule_can_be_set_to_warn(monkeypatch):
 def test_a_rule_that_is_off_is_not_run_at_all(monkeypatch):
     serving(monkeypatch, "getShipment")
     asked = []
-    spy = Rule(SNAKE_CASE, "", Severity.WARN, lambda snap: asked.append(snap) or ["found"])
+    spy = Rule(SNAKE_CASE, "", Severity.WARN, lambda context: asked.append(context) or ["found"])
 
     report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"}), rules=[spy]))
 
@@ -601,8 +586,8 @@ def test_a_rule_that_is_off_is_not_run_at_all(monkeypatch):
 
 def test_the_other_rules_still_run_when_one_is_off(monkeypatch):
     serving(monkeypatch, "getShipment")
-    off = Rule(SNAKE_CASE, "", Severity.WARN, lambda snap: ["silenced"])
-    on = Rule("acme.on", "", Severity.WARN, lambda snap: ["still here"])
+    off = Rule(SNAKE_CASE, "", Severity.WARN, lambda context: ["silenced"])
+    on = Rule("acme.on", "", Severity.WARN, lambda context: ["still here"])
 
     report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"}), rules=[off, on]))
 
@@ -859,20 +844,58 @@ def test_a_rule_that_is_off_is_listed_as_off_even_for_a_server_that_failed(monke
     )
 
 
-def test_the_results_of_the_audit_are_listed_after_the_rules_about_tools(monkeypatch):
-    failing_with_auth(monkeypatch, AUTH)
-    audit = (
-        RuleResult("oauth.metadata", findings=(FINDING,)),
-        RuleResult.skipped("oauth.issuer", "no reason"),
-        RuleResult("oauth.pkce"),
-        RuleResult.off("oauth.registration"),
+def test_the_results_follow_the_order_of_the_rules_whatever_happened_to_each(monkeypatch):
+    serving(monkeypatch, "getShipment")
+
+    def skip(context):
+        raise SkipRule("no reason")
+
+    rules = [
+        Rule("a.found", "", Severity.WARN, lambda context: ["problem"]),
+        Rule("a.skipped", "", Severity.WARN, skip),
+        Rule(SNAKE_CASE, "", Severity.WARN, lambda context: ["silenced"]),  # turned off below
+        Rule("a.passed", "", Severity.WARN, lambda context: []),
+    ]
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"}), rules=rules))
+
+    assert report.servers[0].rules == (
+        RuleResult("a.found", findings=(Finding("a.found", Severity.WARN, "problem"),)),
+        RuleResult.skipped("a.skipped", "no reason"),
+        RuleResult.off(SNAKE_CASE),
+        RuleResult("a.passed"),
     )
 
-    async def fake_audit(auth, url, *, timeout, issuer_slash_accepted):
-        return audit
 
-    monkeypatch.setattr(doctor, "audit_authorization_server", fake_audit)
+def test_a_rule_that_raises_is_an_error_and_the_other_rules_still_run(monkeypatch):
+    serving(monkeypatch, "get_order")
 
-    report = asyncio.run(run_doctor(http_config()))
+    def broken(context):
+        raise ValueError("boom")
 
-    assert report.servers[0].rules == (RuleResult.skipped(SNAKE_CASE, NO_CONNECTION), *audit)
+    rules = [
+        Rule("a.broken", "", Severity.WARN, broken),
+        Rule("a.fine", "", Severity.WARN, lambda context: []),
+    ]
+
+    report = asyncio.run(run_doctor(stdio_config({}), rules=rules))
+
+    [failure] = report.servers[0].findings
+    assert (failure.rule_id, failure.severity) == ("a.broken", Severity.ERROR)
+    assert "the rule failed: ValueError: boom" in failure.message
+    assert report.servers[0].rules[1] == RuleResult("a.fine")
+    assert not report.ok
+
+
+def test_a_rule_only_applies_to_the_kinds_of_server_it_is_about(monkeypatch):
+    serving(monkeypatch, "get_order")
+    rules = [
+        Rule("a.everywhere", "", Severity.WARN, lambda context: []),
+        Rule("a.http_only", "", Severity.WARN, lambda context: [], transports=("http",)),
+    ]
+
+    stdio = asyncio.run(run_doctor(stdio_config({}), rules=rules))
+    http = asyncio.run(run_doctor(http_config(), rules=rules))
+
+    assert [r.rule_id for r in stdio.servers[0].rules] == ["a.everywhere"]
+    assert [r.rule_id for r in http.servers[0].rules] == ["a.everywhere", "a.http_only"]

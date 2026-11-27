@@ -20,7 +20,7 @@ from mcph.doctor import format_report, format_rules, run_doctor
 from mcph.mcp_client import DEFAULT_TIMEOUT_SECONDS
 from mcph.oauth_login import DEFAULT_LOGIN_TIMEOUT_SECONDS, LoginError
 from mcph.oauth_login import login as sign_in
-from mcph.rules import known_rules
+from mcph.rules.builtin import known_rules
 from mcph.token_store import TokenStore, TokenStoreError
 
 app = typer.Typer(
