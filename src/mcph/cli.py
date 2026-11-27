@@ -33,7 +33,7 @@ def main(
         typer.Option(
             "--config",
             "-c",
-            help="Path to the mcph.yaml config file [default: ./mcph.yaml].",
+            help="Path to the mcph.yaml config file (default: ./mcph.yaml).",
         ),
     ] = None,
 ) -> None:

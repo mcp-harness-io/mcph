@@ -45,6 +45,7 @@ def test_help_lists_all_commands():
     assert result.exit_code == 0
     assert "MCP Harness" in plain(result.output)
     assert "--config" in plain(result.output)
+    assert "(default: ./mcph.yaml)" in plain(result.output)
     for command in COMMANDS:
         assert command in plain(result.output)
 
