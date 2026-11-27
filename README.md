@@ -81,6 +81,8 @@ Doctor also checks the OAuth setup the server announces (for an `auth: {type: oa
 | `oauth.pkce` | error | PKCE with `S256` is advertised. |
 | `oauth.registration` | warning | Dynamic client registration is offered. |
 
+Each of these is a rule you can configure (see [Configuring rules](#configuring-rules)).
+
 ## OAuth login
 
 For a server that uses OAuth, set `auth: {type: oauth}` (optionally with `scopes`) and sign in once:
@@ -109,6 +111,25 @@ If login stops with `Authorization server metadata issuer mismatch`, the server 
 
 Warnings do not fail the run unless you pass `--strict`.
 
+### Configuring rules
+
+Under `doctor.rules` in `mcph.yaml`, set how serious a rule is, or turn it off. This applies to the rule above and to the `oauth.*` checks, by rule id:
+
+```yaml
+doctor:
+  rules:
+    core.tool_name_snake_case: error   # a camelCase tool name now fails the run
+    oauth.registration: off            # do not check for dynamic client registration
+```
+
+- `error`: findings of the rule are errors, so the run fails (exit code `1`).
+- `warn`: findings are warnings, which fail the run only with `--strict`.
+- `off`: the rule does not run and reports nothing. Write it without quotes if you like: YAML reads `off` as false, and mcph accepts that.
+
+Rules you do not list keep their default severity. A configured severity replaces the default for all findings of that rule, so `oauth.issuer: error` also makes a trailing-slash difference an error. With all four `oauth.*` checks off, doctor does not contact an authorization server at all.
+
+A rule id that does not exist is a config error (exit code `2`) that lists the known ids and suggests the closest one.
+
 ## mcph.yaml
 
 - `version`: optional, `"1"`.
@@ -121,5 +142,7 @@ Warnings do not fail the run unless you pass `--strict`.
     - `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed.
     - `type: oauth`, optional `scopes` and optional `ignore_issuer_trailing_slash`: sign in through the browser with `mcph auth login <server>` (see [OAuth login](#oauth-login)).
   - `primary`: optional `true` for the server you are developing (at most one).
+- `doctor`: optional settings for `mcph doctor`.
+  - `rules`: how serious each rule is, as `rule id: error | warn | off` (see [Configuring rules](#configuring-rules)).
 
 `stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.

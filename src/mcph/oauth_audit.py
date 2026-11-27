@@ -20,11 +20,7 @@ from mcp.client.auth.utils import (
 
 from mcph.auth_probe import AuthInfo
 from mcph.rules import Finding, Severity
-
-ISSUER = "oauth.issuer"
-METADATA = "oauth.metadata"
-PKCE = "oauth.pkce"
-REGISTRATION = "oauth.registration"
+from mcph.rules.builtin.oauth import ISSUER, METADATA, PKCE, REGISTRATION
 
 
 @dataclass(frozen=True)

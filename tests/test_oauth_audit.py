@@ -10,7 +10,7 @@ from mcph.oauth_audit import (
     check_metadata,
     discover_metadata,
 )
-from mcph.rules import Finding, Severity
+from mcph.rules import OAUTH_RULES, Finding, Severity
 
 RESOURCE = "https://rs.test/mcp"
 ANNOUNCED = "https://as.test"
@@ -187,6 +187,23 @@ def test_every_problem_is_reported_in_a_stable_order():
         ("oauth.pkce", Severity.ERROR),
         ("oauth.registration", Severity.WARN),
     ]
+
+
+def test_every_finding_comes_from_a_declared_rule_with_its_default_severity():
+    # `oauth.*` rules are configurable in mcph.yaml, so the audit and the declared rules
+    # must agree on the ids and on how serious each problem is by default.
+    broken = changed(
+        authorization_endpoint=None,
+        issuer="https://evil.test",
+        code_challenge_methods_supported=None,
+        registration_endpoint=None,
+    )
+
+    findings = check_metadata(ANNOUNCED, found(broken))
+
+    assert {f.rule_id: f.severity for f in findings} == {
+        rule.id: rule.severity for rule in OAUTH_RULES
+    }
 
 
 # --- looking the metadata up ------------------------------------------------------------------

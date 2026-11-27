@@ -15,7 +15,16 @@ from mcph.mcp_client import (
     snapshot_server,
 )
 from mcph.oauth_audit import audit_authorization_server
-from mcph.rules import BUILTIN_RULES, Finding, Rule, Severity, run_rules
+from mcph.rules import (
+    BUILTIN_RULES,
+    OAUTH_RULES,
+    Finding,
+    Rule,
+    Severity,
+    apply_rule_settings,
+    enabled_rules,
+    run_rules,
+)
 
 
 @dataclass(frozen=True)
@@ -67,23 +76,28 @@ async def run_doctor(
     """Check every server in ``config``, one after another.
 
     Each server that starts is also checked against ``rules``. A failing server
-    does not stop the others from being checked.
+    does not stop the others from being checked. The ``doctor.rules`` settings of
+    the config decide which rules run and how serious their findings are.
     """
-    rules = tuple(rules)
+    settings = config.doctor.rules
+    rules = enabled_rules(rules, settings)
+    audit_oauth = bool(enabled_rules(OAUTH_RULES, settings))
     reports: list[ServerReport] = []
     for server in config.servers:
+        snapshot = error = None
         try:
             snapshot = await snapshot_server(
                 server, cwd=config.base_dir, timeout=timeout
             )
         except ServerError as exc:
-            findings = await _oauth_findings(server, exc, timeout)
-            reports.append(ServerReport(server.name, error=exc, findings=findings))
+            error = exc
+            found = await _oauth_findings(server, exc, timeout) if audit_oauth else ()
         else:
-            findings = tuple(run_rules(snapshot, rules))
-            reports.append(
-                ServerReport(server.name, snapshot=snapshot, findings=findings)
-            )
+            found = run_rules(snapshot, rules)
+        findings = tuple(apply_rule_settings(found, settings))
+        reports.append(
+            ServerReport(server.name, snapshot=snapshot, error=error, findings=findings)
+        )
     return DoctorReport(tuple(reports))
 
 

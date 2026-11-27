@@ -5,6 +5,7 @@ from mcph import doctor
 from mcph.auth_probe import AuthInfo
 from mcph.config import (
     Config,
+    DoctorConfig,
     HttpServerConfig,
     OAuthAuthConfig,
     StdioServerConfig,
@@ -506,3 +507,146 @@ def test_servers_that_connected_are_not_audited(monkeypatch):
 
     assert calls == []
 
+
+# --- the rule settings of mcph.yaml ---------------------------------------------------------
+
+
+def with_rules(config: Config, rules: dict[str, str]) -> Config:
+    return config.model_copy(update={"doctor": DoctorConfig(rules=rules)})
+
+
+def stdio_config(rules: dict[str, str]) -> Config:
+    server = StdioServerConfig(name="orders", transport="stdio", command="x")
+    return with_rules(Config(servers=[server]), rules)
+
+
+def serving(monkeypatch, *tools: str) -> None:
+    async def fake_snapshot(server, *, cwd, timeout):
+        return snapshot(tools=tools)
+
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+
+
+SNAKE_CASE = "core.tool_name_snake_case"
+
+
+def test_a_rule_can_be_made_an_error(monkeypatch):
+    serving(monkeypatch, "get_order", "getShipment")
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "error"})))
+
+    [finding] = report.servers[0].findings
+    assert (finding.rule_id, finding.severity) == (SNAKE_CASE, Severity.ERROR)
+    assert not report.ok
+    assert "  ERROR  core.tool_name_snake_case: tool 'getShipment'" in format_report(report)
+
+
+def test_a_rule_can_be_set_to_warn(monkeypatch):
+    serving(monkeypatch, "getShipment")
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "warn"})))
+
+    assert [f.severity for f in report.servers[0].findings] == [Severity.WARN]
+    assert report.ok and report.warning_count == 1
+
+
+def test_a_rule_that_is_off_is_not_run_at_all(monkeypatch):
+    serving(monkeypatch, "getShipment")
+    asked = []
+    spy = Rule(SNAKE_CASE, "", Severity.WARN, lambda snap: asked.append(snap) or ["found"])
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"}), rules=[spy]))
+
+    assert asked == []
+    assert report.servers[0].findings == ()
+    assert "All servers OK." in format_report(report)
+
+
+def test_the_other_rules_still_run_when_one_is_off(monkeypatch):
+    serving(monkeypatch, "getShipment")
+    off = Rule(SNAKE_CASE, "", Severity.WARN, lambda snap: ["silenced"])
+    on = Rule("acme.on", "", Severity.WARN, lambda snap: ["still here"])
+
+    report = asyncio.run(run_doctor(stdio_config({SNAKE_CASE: "off"}), rules=[off, on]))
+
+    assert report.servers[0].findings == (Finding("acme.on", Severity.WARN, "still here"),)
+
+
+def test_rules_that_are_not_mentioned_keep_their_default_severity(monkeypatch):
+    serving(monkeypatch, "getShipment")
+
+    report = asyncio.run(run_doctor(stdio_config({"oauth.pkce": "error"})))
+
+    assert [f.severity for f in report.servers[0].findings] == [Severity.WARN]
+
+
+def test_the_settings_apply_to_every_server(monkeypatch):
+    serving(monkeypatch, "getShipment")
+    servers = [
+        StdioServerConfig(name=name, transport="stdio", command="x") for name in ("a", "b")
+    ]
+    config = with_rules(Config(servers=servers), {SNAKE_CASE: "error"})
+
+    report = asyncio.run(run_doctor(config))
+
+    assert [s.ok for s in report.servers] == [False, False]
+
+
+def test_oauth_findings_get_the_configured_severity_and_the_ones_that_are_off_vanish(
+    monkeypatch,
+):
+    failing_with_auth(monkeypatch, AUTH)
+    record_audits(
+        monkeypatch,
+        (
+            Finding("oauth.pkce", Severity.ERROR, "no S256"),
+            Finding("oauth.issuer", Severity.ERROR, "another issuer"),
+            Finding("oauth.registration", Severity.WARN, "no registration"),
+        ),
+    )
+    settings = {"oauth.pkce": "warn", "oauth.issuer": "off"}
+
+    report = asyncio.run(run_doctor(with_rules(http_config(), settings)))
+
+    assert report.servers[0].findings == (
+        Finding("oauth.pkce", Severity.WARN, "no S256"),
+        Finding("oauth.registration", Severity.WARN, "no registration"),
+    )
+
+
+def test_the_authorization_server_is_still_checked_while_one_oauth_rule_is_on(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    registration = Finding("oauth.registration", Severity.WARN, "no registration")
+    calls = record_audits(monkeypatch, (FINDING, registration))
+    settings = {"oauth.metadata": "off", "oauth.issuer": "off", "oauth.pkce": "off"}
+
+    report = asyncio.run(run_doctor(with_rules(http_config(), settings)))
+
+    assert len(calls) == 1
+    assert report.servers[0].findings == (registration,)  # FINDING is oauth.pkce: off
+
+
+def test_the_authorization_server_is_not_contacted_when_every_oauth_rule_is_off(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch, (FINDING,))
+    settings = {
+        "oauth.metadata": "off",
+        "oauth.issuer": "off",
+        "oauth.pkce": "off",
+        "oauth.registration": "off",
+    }
+
+    report = asyncio.run(run_doctor(with_rules(http_config(), settings)))
+
+    assert calls == []
+    assert report.servers[0].findings == ()
+
+
+def test_turning_off_a_rule_of_another_kind_does_not_stop_the_oauth_checks(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch, (FINDING,))
+
+    report = asyncio.run(run_doctor(with_rules(http_config(), {SNAKE_CASE: "off"})))
+
+    assert len(calls) == 1
+    assert report.servers[0].findings == (FINDING,)
