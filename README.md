@@ -5,13 +5,13 @@
 | Name                     |    Stmts |     Miss |    Cover |   Missing |
 |------------------------- | -------: | -------: | -------: | --------: |
 | src/mcph/\_\_init\_\_.py |        1 |        0 |     100% |           |
-| src/mcph/auth\_probe.py  |       63 |        0 |     100% |           |
+| src/mcph/auth\_probe.py  |       81 |        0 |     100% |           |
 | src/mcph/cli.py          |       36 |        0 |     100% |           |
-| src/mcph/config.py       |      122 |        0 |     100% |           |
-| src/mcph/doctor.py       |      101 |        0 |     100% |           |
-| src/mcph/mcp\_client.py  |       72 |        0 |     100% |           |
+| src/mcph/config.py       |      133 |        0 |     100% |           |
+| src/mcph/doctor.py       |      110 |        0 |     100% |           |
+| src/mcph/mcp\_client.py  |      102 |        0 |     100% |           |
 | src/mcph/rules.py        |       39 |        0 |     100% |           |
-| **TOTAL**                |  **434** |    **0** | **100%** |           |
+| **TOTAL**                |  **502** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
