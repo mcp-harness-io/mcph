@@ -10,8 +10,9 @@ setup: ## Install dependencies (including dev group)
 test: ## Run the test suite (no coverage)
 	uv run pytest --no-cov
 
-coverage: ## Run tests and print coverage (fails below 90%)
-	uv run pytest --cov=mcph --cov-report=term-missing --cov-fail-under=90
+# The coverage options and the threshold live in pyproject.toml (pytest addopts).
+coverage: ## Run tests and print coverage (the threshold is set in pyproject.toml)
+	uv run pytest
 
 build: ## Build sdist and wheel into dist/
 	uv build
