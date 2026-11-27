@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mcph.auth_probe import AuthInfo
-from mcph.config import Config
+from mcph.config import Config, HttpServerConfig, OAuthAuthConfig, ServerConfig
 from mcph.mcp_client import (
     DEFAULT_TIMEOUT_SECONDS,
     ServerError,
     ServerSnapshot,
     snapshot_server,
 )
+from mcph.oauth_audit import audit_authorization_server
 from mcph.rules import BUILTIN_RULES, Finding, Rule, Severity, run_rules
 
 
@@ -76,13 +77,29 @@ async def run_doctor(
                 server, cwd=config.base_dir, timeout=timeout
             )
         except ServerError as exc:
-            reports.append(ServerReport(server.name, error=exc))
+            findings = await _oauth_findings(server, exc, timeout)
+            reports.append(ServerReport(server.name, error=exc, findings=findings))
         else:
             findings = tuple(run_rules(snapshot, rules))
             reports.append(
                 ServerReport(server.name, snapshot=snapshot, findings=findings)
             )
     return DoctorReport(tuple(reports))
+
+
+async def _oauth_findings(
+    server: ServerConfig, error: ServerError, timeout: float
+) -> tuple[Finding, ...]:
+    """Problems with the OAuth setup of a server that needs authentication."""
+    if error.auth is None or not isinstance(server, HttpServerConfig):
+        return ()
+    accepted = (
+        isinstance(server.auth, OAuthAuthConfig)
+        and server.auth.ignore_issuer_trailing_slash
+    )
+    return await audit_authorization_server(
+        error.auth, server.url, timeout=timeout, issuer_slash_accepted=accepted
+    )
 
 
 def format_report(report: DoctorReport, *, config_path: Path | None = None) -> str:
@@ -110,6 +127,7 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
                     _continuation("  " + line)
                     for line in server.error.stderr_tail.splitlines()
                 )
+            lines.extend(_finding_line(finding) for finding in server.findings)
 
     failed = sum(1 for server in report.servers if not server.ok)
     summary = (

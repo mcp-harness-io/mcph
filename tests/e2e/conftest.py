@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import socket
@@ -245,4 +246,88 @@ def idle_browser(monkeypatch: pytest.MonkeyPatch):
         webbrowser, "open", lambda url, *args, **kwargs: opened.append(url) or True
     )
     return opened
+
+
+@pytest.fixture
+def fake_oauth_server():
+    """Start a server whose OAuth documents can be set to anything.
+
+    Returns ``start(announced=None, missing=False, **metadata)``, which gives the
+    URL of its MCP endpoint. The endpoint answers 401 and points at protected
+    resource metadata that announces ``announced`` (default: the server itself,
+    without a trailing slash) as the authorization server. Keyword arguments
+    override the authorization server's metadata (``None`` removes a key);
+    ``missing=True`` makes that metadata a 404. In string values ``{base}`` stands
+    for the server's own URL, so ``announced="{base}/"`` announces it with a slash.
+    """
+    servers: list[HTTPServer] = []
+    threads: list[threading.Thread] = []
+
+    def start(announced: str | None = None, missing: bool = False, **metadata: object) -> str:
+        class Handler(BaseHTTPRequestHandler):
+            def respond(self) -> None:
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                state = self.server.state
+                path = self.path.split("?")[0]
+                if path == "/mcp":
+                    status, headers, body = 401, {
+                        "WWW-Authenticate": "Bearer resource_metadata="
+                        f'"{state["base"]}/.well-known/oauth-protected-resource/mcp"'
+                    }, None
+                elif path == "/.well-known/oauth-protected-resource/mcp":
+                    status, headers, body = 200, {}, {
+                        "resource": f"{state['base']}/mcp",
+                        "authorization_servers": [state["announced"]],
+                        "scopes_supported": ["api.read"],
+                    }
+                elif path == "/.well-known/oauth-authorization-server" and not state["missing"]:
+                    status, headers, body = 200, {}, state["metadata"]
+                else:
+                    status, headers, body = 404, {}, None
+                payload = b"" if body is None else json.dumps(body).encode()
+                self.send_response(status)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                if body is not None:
+                    self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            do_GET = do_POST = respond
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        base = f"http://127.0.0.1:{server.server_port}"
+        defaults = {
+            "issuer": base,
+            "authorization_endpoint": f"{base}/authorize",
+            "token_endpoint": f"{base}/token",
+            "registration_endpoint": f"{base}/register",
+            "code_challenge_methods_supported": ["S256"],
+        }
+        def fill(value: object) -> object:
+            return value.replace("{base}", base) if isinstance(value, str) else value
+
+        merged = {**defaults, **{k: fill(v) for k, v in metadata.items()}}
+        server.state = {
+            "base": base,
+            "announced": fill(announced) if announced else base,
+            "missing": missing,
+            "metadata": {k: v for k, v in merged.items() if v is not None},
+        }
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        servers.append(server)
+        threads.append(thread)
+        return f"{base}/mcp"
+
+    yield start
+
+    for server, thread in zip(servers, threads):
+        server.shutdown()
+        server.server_close()
+        thread.join()
 

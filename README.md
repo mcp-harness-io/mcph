@@ -72,6 +72,15 @@ docs
          scopes: api.read, api.write
 ```
 
+Doctor also checks the OAuth setup the server announces (for an `auth: {type: oauth}` server that is not logged in yet too), so a problem that would stop a client from signing in shows up before anyone tries. It only sends unauthenticated requests, and only for a server that needs authentication:
+
+| Check | Severity | Looks for |
+|---|---|---|
+| `oauth.metadata` | error | The authorization server's metadata can be found and has an authorization and a token endpoint. |
+| `oauth.issuer` | error (warning if only a trailing slash differs) | The metadata's `issuer` is the authorization server the resource announced. |
+| `oauth.pkce` | error | PKCE with `S256` is advertised. |
+| `oauth.registration` | warning | Dynamic client registration is offered. |
+
 ## OAuth login
 
 For a server that uses OAuth, set `auth: {type: oauth}` (optionally with `scopes`) and sign in once:

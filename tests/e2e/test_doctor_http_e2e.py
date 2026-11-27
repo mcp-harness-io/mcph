@@ -101,7 +101,7 @@ def test_server_that_requires_authentication_is_explained(project, start_http_se
         'challenge: Bearer resource_metadata="'
         f'http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp"'
     ) in result.output
-    assert "authorization server: https://auth.example.test/" in result.output
+    assert f"authorization server: http://127.0.0.1:{port}/" in result.output
     assert "scopes: api.read, api.write" in result.output
     assert "1 of 1 server failed." in result.output
 

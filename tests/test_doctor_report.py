@@ -3,7 +3,12 @@ from pathlib import Path
 
 from mcph import doctor
 from mcph.auth_probe import AuthInfo
-from mcph.config import Config, StdioServerConfig
+from mcph.config import (
+    Config,
+    HttpServerConfig,
+    OAuthAuthConfig,
+    StdioServerConfig,
+)
 from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
 from mcph.rules import Finding, Rule, Severity
@@ -370,4 +375,134 @@ def test_a_403_without_a_challenge_says_so():
     text = format_report(auth_report(challenge=None, status=403, error=None))
 
     assert "challenge: none (the 403 had no WWW-Authenticate header)" in text
+
+
+# --- OAuth findings next to the explanation of why authentication failed --------------------
+
+
+def test_oauth_findings_are_listed_under_the_failed_server():
+    auth = AuthInfo(
+        challenge='Bearer resource_metadata="http://h/prm"',
+        metadata_url="http://h/prm",
+        authorization_servers=("https://auth.example.com/",),
+    )
+    findings = (
+        Finding("oauth.issuer", Severity.WARN, "they differ only by a trailing slash"),
+        Finding("oauth.pkce", Severity.ERROR, "no S256"),
+    )
+    error = ServerError(AUTH_MESSAGE, auth=auth)
+    report = DoctorReport((ServerReport("docs", error=error, findings=findings),))
+
+    assert format_report(report) == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "docs",
+            f"  ERROR  {AUTH_MESSAGE}",
+            '         challenge: Bearer resource_metadata="http://h/prm"',
+            "         authorization server: https://auth.example.com/",
+            "  WARN   oauth.issuer: they differ only by a trailing slash",
+            "  ERROR  oauth.pkce: no S256",
+            "",
+            "1 of 1 server failed, 1 warning.",
+        ]
+    )
+
+
+def failing_with_auth(monkeypatch, auth: AuthInfo | None):
+    async def fake_snapshot(server, *, cwd, timeout):
+        raise ServerError("authentication required", auth=auth)
+
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+
+
+def record_audits(monkeypatch, findings=()):
+    calls = []
+
+    async def fake_audit(auth, url, *, timeout, issuer_slash_accepted):
+        calls.append(
+            {"auth": auth, "url": url, "timeout": timeout, "accepted": issuer_slash_accepted}
+        )
+        return findings
+
+    monkeypatch.setattr(doctor, "audit_authorization_server", fake_audit)
+    return calls
+
+
+def http_config(**auth) -> Config:
+    server = HttpServerConfig(
+        name="docs",
+        transport="http",
+        url="http://x/mcp",
+        auth=OAuthAuthConfig(type="oauth", **auth) if auth is not None else None,
+    )
+    return Config(servers=[server])
+
+
+AUTH = AuthInfo(challenge=None, authorization_servers=("https://as.test/",))
+FINDING = Finding("oauth.pkce", Severity.ERROR, "no S256")
+
+
+def test_a_server_that_needs_authentication_gets_its_oauth_setup_checked(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch, (FINDING,))
+
+    report = asyncio.run(run_doctor(http_config(), timeout=9))
+
+    assert report.servers[0].findings == (FINDING,)
+    assert calls == [{"auth": AUTH, "url": "http://x/mcp", "timeout": 9, "accepted": False}]
+
+
+def test_the_trailing_slash_setting_of_the_server_is_passed_on(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch)
+
+    asyncio.run(run_doctor(http_config(ignore_issuer_trailing_slash=True)))
+
+    assert calls[0]["accepted"] is True
+
+
+def test_a_server_without_oauth_settings_is_checked_with_the_strict_default(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch)
+    config = Config(
+        servers=[HttpServerConfig(name="docs", transport="http", url="http://x/mcp")]
+    )
+
+    asyncio.run(run_doctor(config))
+
+    assert calls[0]["accepted"] is False
+
+
+def test_nothing_is_checked_when_the_server_did_not_say_anything_about_auth(monkeypatch):
+    failing_with_auth(monkeypatch, None)
+    calls = record_audits(monkeypatch, (FINDING,))
+
+    report = asyncio.run(run_doctor(http_config()))
+
+    assert calls == []
+    assert report.servers[0].findings == ()
+
+
+def test_stdio_servers_are_never_audited(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    calls = record_audits(monkeypatch, (FINDING,))
+    config = Config(servers=[StdioServerConfig(name="s", transport="stdio", command="x")])
+
+    report = asyncio.run(run_doctor(config))
+
+    assert calls == []
+    assert report.servers[0].findings == ()
+
+
+def test_servers_that_connected_are_not_audited(monkeypatch):
+    async def fake_snapshot(server, *, cwd, timeout):
+        return snapshot()
+
+    monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
+    calls = record_audits(monkeypatch, (FINDING,))
+
+    asyncio.run(run_doctor(http_config()))
+
+    assert calls == []
 

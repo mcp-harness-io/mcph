@@ -40,7 +40,7 @@ def test_a_wrong_token_is_reported_as_rejected(project, start_http_server, monke
     assert f"ERROR  the server rejected the token in ${VARIABLE} (HTTP 401)" in result.output
     assert "error: invalid_token" in result.output
     assert "server says: " in result.output
-    assert "authorization server: https://auth.example.test/" in result.output
+    assert re.search(r"authorization server: http://127\.0\.0\.1:\d+/", result.output)
     assert "not-a-valid-token" not in result.output
 
 

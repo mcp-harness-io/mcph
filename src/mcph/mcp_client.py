@@ -81,7 +81,8 @@ class ServerError(Exception):
         self.message = message
         self.stderr_tail = stderr_tail
         self.auth = auth
-        """Set when the server answered 401: what it says about the auth it needs."""
+        """What the server says about the auth it needs: set when it answered 401, and
+        when an OAuth server has no usable login yet and was asked what it needs."""
         self.timed_out = timed_out
 
 
@@ -150,7 +151,14 @@ async def snapshot_http_server(
     the URL. If the server refuses us (401, or 403 for a missing scope), the error
     says why and carries what the server advertises (:attr:`ServerError.auth`).
     """
-    token = await _resolve_token(server, store or TokenStore())
+    try:
+        token = await _resolve_token(server, store or TokenStore())
+    except ServerError as error:
+        if isinstance(server.auth, OAuthAuthConfig):
+            # Not logged in (or the login is unusable): ask the server what it needs,
+            # so the report can say whether signing in could work at all.
+            error.auth = await probe_auth(server.url, timeout=timeout)
+        raise
     try:
         return await _snapshot(
             StreamableHttpTransport(url=server.url, auth=token),
