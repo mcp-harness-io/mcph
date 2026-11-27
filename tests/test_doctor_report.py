@@ -10,9 +10,18 @@ from mcph.config import (
     OAuthAuthConfig,
     StdioServerConfig,
 )
-from mcph.doctor import DoctorReport, ServerReport, format_report, run_doctor
+from mcph.doctor import (
+    NO_CONNECTION,
+    NOT_NEEDED,
+    DoctorReport,
+    ServerReport,
+    format_report,
+    run_doctor,
+)
 from mcph.mcp_client import ServerError, ServerSnapshot, ToolInfo
-from mcph.rules import Finding, Rule, Severity
+from mcph.rules import OAUTH_RULES, Finding, Rule, RuleResult, Severity
+
+OAUTH_IDS = [rule.id for rule in OAUTH_RULES]
 
 
 def snapshot(
@@ -147,9 +156,18 @@ WARNING = Finding(
 )
 
 
+def reported(*findings: Finding) -> tuple[RuleResult, ...]:
+    """The results of the rules that reported these findings, one per rule id."""
+    ids = dict.fromkeys(finding.rule_id for finding in findings)
+    return tuple(
+        RuleResult(rule_id, findings=tuple(f for f in findings if f.rule_id == rule_id))
+        for rule_id in ids
+    )
+
+
 def test_findings_are_listed_under_their_server():
     report = DoctorReport(
-        (ServerReport("orders", snapshot=snapshot(), findings=(WARNING,)),)
+        (ServerReport("orders", snapshot=snapshot(), rules=reported(WARNING)),)
     )
 
     assert format_report(report) == "\n".join(
@@ -170,7 +188,7 @@ def test_summary_counts_warnings_and_failed_servers_together():
     two_warnings = (WARNING, WARNING)
     report = DoctorReport(
         (
-            ServerReport("a", snapshot=snapshot(), findings=two_warnings),
+            ServerReport("a", snapshot=snapshot(), rules=reported(*two_warnings)),
             ServerReport("b", error=ServerError("boom")),
         )
     )
@@ -183,7 +201,7 @@ def test_summary_counts_warnings_and_failed_servers_together():
 def test_error_findings_fail_the_server_and_are_labelled_error():
     problem = Finding("acme.rule", Severity.ERROR, "something is wrong")
     report = DoctorReport(
-        (ServerReport("orders", snapshot=snapshot(), findings=(problem,)),)
+        (ServerReport("orders", snapshot=snapshot(), rules=reported(problem)),)
     )
 
     text = format_report(report)
@@ -195,7 +213,7 @@ def test_error_findings_fail_the_server_and_are_labelled_error():
 
 def test_passed_treats_warnings_as_failures_only_when_strict():
     clean = DoctorReport((ServerReport("a", snapshot=snapshot()),))
-    warned = DoctorReport((ServerReport("a", snapshot=snapshot(), findings=(WARNING,)),))
+    warned = DoctorReport((ServerReport("a", snapshot=snapshot(), rules=reported(WARNING)),))
     broken = DoctorReport((ServerReport("a", error=ServerError("boom")),))
 
     assert clean.passed() and clean.passed(strict=True)
@@ -241,6 +259,7 @@ def test_servers_that_failed_to_start_are_not_checked_against_rules(monkeypatch)
     report = asyncio.run(run_doctor(config))
 
     assert report.servers[0].findings == ()
+    assert report.servers[0].rules == (RuleResult.skipped(SNAKE_CASE, NO_CONNECTION),)
 
 
 def test_http_servers_are_connected_to_not_started():
@@ -392,7 +411,7 @@ def test_oauth_findings_are_listed_under_the_failed_server():
         Finding("oauth.pkce", Severity.ERROR, "no S256"),
     )
     error = ServerError(AUTH_MESSAGE, auth=auth)
-    report = DoctorReport((ServerReport("docs", error=error, findings=findings),))
+    report = DoctorReport((ServerReport("docs", error=error, rules=reported(*findings)),))
 
     assert format_report(report) == "\n".join(
         [
@@ -417,6 +436,14 @@ def failing_with_auth(monkeypatch, auth: AuthInfo | None):
     monkeypatch.setattr(doctor, "snapshot_server", fake_snapshot)
 
 
+def audited(findings=()) -> tuple[RuleResult, ...]:
+    """What the OAuth audit answers: a result for every oauth.* rule."""
+    return tuple(
+        RuleResult(rule.id, findings=tuple(f for f in findings if f.rule_id == rule.id))
+        for rule in OAUTH_RULES
+    )
+
+
 def record_audits(monkeypatch, findings=()):
     calls = []
 
@@ -424,7 +451,7 @@ def record_audits(monkeypatch, findings=()):
         calls.append(
             {"auth": auth, "url": url, "timeout": timeout, "accepted": issuer_slash_accepted}
         )
-        return findings
+        return audited(findings)
 
     monkeypatch.setattr(doctor, "audit_authorization_server", fake_audit)
     return calls
@@ -451,6 +478,10 @@ def test_a_server_that_needs_authentication_gets_its_oauth_setup_checked(monkeyp
     report = asyncio.run(run_doctor(http_config(), timeout=9))
 
     assert report.servers[0].findings == (FINDING,)
+    assert report.servers[0].rules == (
+        RuleResult.skipped(SNAKE_CASE, NO_CONNECTION),
+        *audited((FINDING,)),
+    )
     assert calls == [{"auth": AUTH, "url": "http://x/mcp", "timeout": 9, "accepted": False}]
 
 
@@ -483,6 +514,10 @@ def test_nothing_is_checked_when_the_server_did_not_say_anything_about_auth(monk
 
     assert calls == []
     assert report.servers[0].findings == ()
+    assert report.servers[0].rules == (
+        RuleResult.skipped(SNAKE_CASE, NO_CONNECTION),
+        *(RuleResult.skipped(rule_id, NO_CONNECTION) for rule_id in OAUTH_IDS),
+    )
 
 
 def test_stdio_servers_are_never_audited(monkeypatch):
@@ -494,6 +529,7 @@ def test_stdio_servers_are_never_audited(monkeypatch):
 
     assert calls == []
     assert report.servers[0].findings == ()
+    assert [r.rule_id for r in report.servers[0].rules] == [SNAKE_CASE]  # no oauth.* rules
 
 
 def test_servers_that_connected_are_not_audited(monkeypatch):
@@ -559,6 +595,7 @@ def test_a_rule_that_is_off_is_not_run_at_all(monkeypatch):
 
     assert asked == []
     assert report.servers[0].findings == ()
+    assert report.servers[0].rules == (RuleResult.off(SNAKE_CASE),)
     assert "All servers OK." in format_report(report)
 
 
@@ -640,6 +677,7 @@ def test_the_authorization_server_is_not_contacted_when_every_oauth_rule_is_off(
 
     assert calls == []
     assert report.servers[0].findings == ()
+    assert report.servers[0].rules[1:] == tuple(RuleResult.off(rule_id) for rule_id in OAUTH_IDS)
 
 
 def test_turning_off_a_rule_of_another_kind_does_not_stop_the_oauth_checks(monkeypatch):
@@ -650,3 +688,191 @@ def test_turning_off_a_rule_of_another_kind_does_not_stop_the_oauth_checks(monke
 
     assert len(calls) == 1
     assert report.servers[0].findings == (FINDING,)
+
+
+# --- what happened to each rule -------------------------------------------------------------
+
+
+def test_a_rule_that_passed_is_listed_as_ok():
+    report = DoctorReport(
+        (ServerReport("orders", snapshot=snapshot(), rules=(RuleResult(SNAKE_CASE),)),)
+    )
+
+    assert format_report(report) == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "orders",
+            "  OK     started in 312 ms (orders-server 1.2.3, MCP 2026-07-28), 2 tools",
+            "  OK     core.tool_name_snake_case",
+            "",
+            "All servers OK.",
+        ]
+    )
+
+
+def test_a_rule_that_found_problems_is_listed_by_its_findings_and_not_as_ok():
+    rules = (RuleResult(SNAKE_CASE, findings=(WARNING, WARNING)), RuleResult("acme.fine"))
+    report = DoctorReport((ServerReport("orders", snapshot=snapshot(), rules=rules),))
+
+    lines = format_report(report).splitlines()
+
+    assert lines[4:7] == [
+        "  WARN   core.tool_name_snake_case: tool 'getOrder' is not snake_case (try 'get_order')",
+        "  WARN   core.tool_name_snake_case: tool 'getOrder' is not snake_case (try 'get_order')",
+        "  OK     acme.fine",
+    ]
+    assert "  OK     core.tool_name_snake_case" not in lines
+
+
+def test_a_rule_that_is_off_is_listed_as_off():
+    rules = (RuleResult(SNAKE_CASE), RuleResult.off("oauth.pkce"))
+    report = DoctorReport((ServerReport("docs", snapshot=snapshot(), rules=rules),))
+
+    lines = format_report(report).splitlines()
+
+    assert lines[4:6] == ["  OK     core.tool_name_snake_case", "  OFF    oauth.pkce"]
+    assert report.ok and report.warning_count == 0
+
+
+def test_skipped_rules_share_a_line_per_reason_where_the_first_of_them_is():
+    rules = (
+        RuleResult.skipped("core.a", "no tools"),
+        RuleResult("core.b"),
+        RuleResult.skipped("oauth.x", "no tools"),
+        RuleResult.skipped("oauth.y", "no metadata"),
+        RuleResult.off("oauth.z"),
+        RuleResult.skipped("oauth.w", "no tools"),
+    )
+    report = DoctorReport((ServerReport("docs", snapshot=snapshot(), rules=rules),))
+
+    assert format_report(report).splitlines()[4:8] == [
+        "  SKIP   core.a, oauth.x, oauth.w: no tools",
+        "  OK     core.b",
+        "  SKIP   oauth.y: no metadata",
+        "  OFF    oauth.z",
+    ]
+    assert report.ok and report.warning_count == 0
+
+
+def test_the_rules_of_a_failed_server_follow_its_error_and_details():
+    error = ServerError("failed while starting the server: Connection closed", "boom")
+    rules = (RuleResult.skipped(SNAKE_CASE, NO_CONNECTION),)
+    report = DoctorReport((ServerReport("legacy", error=error, rules=rules),))
+
+    assert format_report(report) == "\n".join(
+        [
+            "Checking 1 server",
+            "",
+            "legacy",
+            "  ERROR  failed while starting the server: Connection closed",
+            "         server stderr:",
+            "           boom",
+            "  SKIP   core.tool_name_snake_case: mcph could not connect to the server",
+            "",
+            "1 of 1 server failed.",
+        ]
+    )
+
+
+def test_a_report_without_rule_results_lists_none():
+    report = DoctorReport((ServerReport("orders", snapshot=snapshot()),))
+
+    assert format_report(report).splitlines()[2:] == [
+        "orders",
+        "  OK     started in 312 ms (orders-server 1.2.3, MCP 2026-07-28), 2 tools",
+        "",
+        "All servers OK.",
+    ]
+
+
+def test_every_rule_that_ran_on_a_stdio_server_has_a_result(monkeypatch):
+    serving(monkeypatch, "get_order", "getShipment")
+
+    report = asyncio.run(run_doctor(stdio_config({})))
+
+    [result] = report.servers[0].rules
+    assert result.rule_id == SNAKE_CASE
+    assert [f.message for f in result.findings] == [
+        "tool 'getShipment' is not snake_case (try 'get_shipment')"
+    ]
+
+
+def test_a_rule_that_found_nothing_is_a_result_without_findings(monkeypatch):
+    serving(monkeypatch, "get_order")
+
+    report = asyncio.run(run_doctor(stdio_config({})))
+
+    assert report.servers[0].rules == (RuleResult(SNAKE_CASE),)
+
+
+def test_an_http_server_that_connected_skips_the_oauth_checks(monkeypatch):
+    serving(monkeypatch, "get_order")
+    calls = record_audits(monkeypatch, (FINDING,))
+
+    report = asyncio.run(run_doctor(http_config()))
+
+    assert calls == []
+    assert report.servers[0].rules == (
+        RuleResult(SNAKE_CASE),
+        *(RuleResult.skipped(rule_id, NOT_NEEDED) for rule_id in OAUTH_IDS),
+    )
+
+
+def test_an_oauth_check_that_is_off_is_listed_as_off_among_the_skipped_ones(monkeypatch):
+    serving(monkeypatch, "get_order")
+    config = with_rules(http_config(), {"oauth.registration": "off"})
+
+    report = asyncio.run(run_doctor(config))
+
+    assert report.servers[0].rules == (
+        RuleResult(SNAKE_CASE),
+        *(RuleResult.skipped(rule_id, NOT_NEEDED) for rule_id in OAUTH_IDS[:-1]),
+        RuleResult.off("oauth.registration"),
+    )
+
+
+def test_every_oauth_check_that_is_off_is_listed_as_off_for_a_connected_server(monkeypatch):
+    serving(monkeypatch, "get_order")
+    config = with_rules(http_config(), dict.fromkeys(OAUTH_IDS, "off"))
+
+    report = asyncio.run(run_doctor(config))
+
+    assert report.servers[0].rules == (
+        RuleResult(SNAKE_CASE),
+        *(RuleResult.off(rule_id) for rule_id in OAUTH_IDS),
+    )
+
+
+def test_a_rule_that_is_off_is_listed_as_off_even_for_a_server_that_failed(monkeypatch):
+    failing_with_auth(monkeypatch, None)
+    config = with_rules(http_config(), {SNAKE_CASE: "off", "oauth.pkce": "off"})
+
+    report = asyncio.run(run_doctor(config))
+
+    assert report.servers[0].rules == (
+        RuleResult.off(SNAKE_CASE),
+        RuleResult.skipped("oauth.metadata", NO_CONNECTION),
+        RuleResult.skipped("oauth.issuer", NO_CONNECTION),
+        RuleResult.off("oauth.pkce"),
+        RuleResult.skipped("oauth.registration", NO_CONNECTION),
+    )
+
+
+def test_the_results_of_the_audit_are_listed_after_the_rules_about_tools(monkeypatch):
+    failing_with_auth(monkeypatch, AUTH)
+    audit = (
+        RuleResult("oauth.metadata", findings=(FINDING,)),
+        RuleResult.skipped("oauth.issuer", "no reason"),
+        RuleResult("oauth.pkce"),
+        RuleResult.off("oauth.registration"),
+    )
+
+    async def fake_audit(auth, url, *, timeout, issuer_slash_accepted):
+        return audit
+
+    monkeypatch.setattr(doctor, "audit_authorization_server", fake_audit)
+
+    report = asyncio.run(run_doctor(http_config()))
+
+    assert report.servers[0].rules == (RuleResult.skipped(SNAKE_CASE, NO_CONNECTION), *audit)

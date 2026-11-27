@@ -44,11 +44,13 @@ orders
   WARN   core.tool_name_snake_case: tool 'getOrder' is not snake_case (try 'get_order')
 docs
   OK     connected in 87 ms (docs-server 2.1.0, MCP 2026-07-28), 5 tools
+  OK     core.tool_name_snake_case
+  SKIP   oauth.metadata, oauth.issuer, oauth.pkce, oauth.registration: not needed, the server accepted the connection
 
 All servers OK, 1 warning.
 ```
 
-The `WARN` line comes from a rule. To make a rule fail the run instead, or to switch it off, add a `doctor` section to the same file:
+Under each server doctor lists every rule: `OK` ran and found nothing, `WARN` or `ERROR` found a problem, `OFF` is turned off in `mcph.yaml`, and `SKIP` could not run or was not needed (skipped rules with the same reason share one line). To make a rule fail the run instead, or to switch it off, add a `doctor` section to the same file:
 
 ```yaml
 doctor:
@@ -62,7 +64,7 @@ See [Configuring rules](#configuring-rules) for the details.
 
 | Command | What it does |
 |---|---|
-| `mcph doctor` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports problems. |
+| `mcph doctor` | Starts each `stdio` server (or connects to an `http` one), completes the MCP handshake, lists its tools, checks them against the built-in rules and reports what each rule found. |
 | `mcph auth login`, `status`, `logout` | Signs in to an `http` server that uses OAuth through the browser, shows who is logged in, and signs out again. |
 | `mcph version` | Prints the installed version. |
 | `mcph proxy`, `mcph eval` | Placeholders, not implemented yet. |
@@ -80,9 +82,14 @@ docs
          challenge: Bearer resource_metadata="http://localhost:8080/.well-known/oauth-protected-resource/mcp"
          authorization server: https://auth.example.com/
          scopes: api.read, api.write
+  SKIP   core.tool_name_snake_case: mcph could not connect to the server
+  OK     oauth.metadata
+  OK     oauth.issuer
+  OK     oauth.pkce
+  OK     oauth.registration
 ```
 
-Doctor also checks the OAuth setup the server announces (for an `auth: {type: oauth}` server that is not logged in yet too), so a problem that would stop a client from signing in shows up before anyone tries. It only sends unauthenticated requests, and only for a server that needs authentication:
+Doctor also checks the OAuth setup the server announces (for an `auth: {type: oauth}` server that is not logged in yet too), so a problem that would stop a client from signing in shows up before anyone tries. It only sends unauthenticated requests, and only for a server that needs authentication. For a server that connected, these checks are listed as `SKIP`:
 
 | Check | Severity | Looks for |
 |---|---|---|
@@ -134,7 +141,7 @@ doctor:
 
 - `error`: findings of the rule are errors, so the run fails (exit code `1`).
 - `warn`: findings are warnings, which fail the run only with `--strict`.
-- `off`: the rule does not run and reports nothing. Write it without quotes if you like: YAML reads `off` as false, and mcph accepts that.
+- `off`: the rule does not run, and the report lists it as `OFF`. Write it without quotes if you like: YAML reads `off` as false, and mcph accepts that.
 
 Rules you do not list keep their default severity. A configured severity replaces the default for all findings of that rule, so `oauth.issuer: error` also makes a trailing-slash difference an error. With all four `oauth.*` checks off, doctor does not contact an authorization server at all.
 

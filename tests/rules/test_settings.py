@@ -1,26 +1,47 @@
 import pytest
 
-from mcph.rules import Finding, Rule, RuleInfo, Severity, apply_rule_settings, enabled_rules
+from mcph.rules import Finding, Outcome, RuleResult, Severity, apply_rule_settings, is_off
 
-FINDINGS = [
-    Finding("a.one", Severity.WARN, "first"),
-    Finding("a.two", Severity.ERROR, "second"),
-    Finding("a.one", Severity.WARN, "third"),
-]
+WARNING = Finding("a.rule", Severity.WARN, "first")
+ERROR = Finding("a.rule", Severity.ERROR, "second")
 
 
-def applied(settings: dict[str, str], findings=FINDINGS) -> list[Finding]:
-    return list(apply_rule_settings(findings, settings))
+def test_only_off_turns_a_rule_off():
+    settings = {"a.off": "off", "a.warn": "warn", "a.error": "error"}
+
+    assert is_off("a.off", settings)
+    assert not is_off("a.warn", settings)
+    assert not is_off("a.error", settings)
+    assert not is_off("a.unlisted", settings)
+    assert not is_off("a.off", {})
 
 
-def test_rules_that_are_not_configured_keep_their_findings():
-    assert applied({}) == FINDINGS
-    assert applied({"other.rule": "off"}) == FINDINGS
+def test_a_rule_that_is_not_configured_keeps_its_result():
+    result = RuleResult("a.rule", findings=(WARNING, ERROR))
+
+    assert apply_rule_settings(result, {}) is result
+    assert apply_rule_settings(result, {"other.rule": "off"}) is result
 
 
-def test_a_rule_that_is_off_loses_all_its_findings():
-    assert applied({"a.one": "off"}) == [FINDINGS[1]]
-    assert applied({"a.one": "off", "a.two": "off"}) == []
+def test_skipped_rules_that_are_not_configured_stay_skipped():
+    result = RuleResult.skipped("a.rule", "no reason")
+
+    assert apply_rule_settings(result, {"a.other": "error"}) is result
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        RuleResult("a.rule"),
+        RuleResult("a.rule", findings=(WARNING,)),
+        RuleResult.skipped("a.rule", "because"),
+    ],
+)
+def test_a_rule_that_is_off_becomes_an_off_result_without_findings(result):
+    applied = apply_rule_settings(result, {"a.rule": "off"})
+
+    assert applied == RuleResult("a.rule", Outcome.OFF)
+    assert applied.findings == () and applied.reason == ""
 
 
 @pytest.mark.parametrize(
@@ -33,39 +54,30 @@ def test_a_rule_that_is_off_loses_all_its_findings():
     ],
 )
 def test_the_configured_severity_replaces_the_default(default, setting, expected):
-    [finding] = applied({"a.rule": setting}, [Finding("a.rule", default, "problem")])
+    result = RuleResult("a.rule", findings=(Finding("a.rule", default, "problem"),))
 
-    assert finding == Finding("a.rule", expected, "problem")
+    applied = apply_rule_settings(result, {"a.rule": setting})
+
+    assert applied == RuleResult("a.rule", findings=(Finding("a.rule", expected, "problem"),))
 
 
-def test_only_the_configured_rules_change_and_the_order_is_kept():
-    result = applied({"a.one": "error"})
+def test_every_finding_of_the_rule_gets_the_severity_and_nothing_else_changes():
+    result = RuleResult("a.rule", findings=(WARNING, ERROR))
 
-    assert result == [
-        Finding("a.one", Severity.ERROR, "first"),
-        Finding("a.two", Severity.ERROR, "second"),
-        Finding("a.one", Severity.ERROR, "third"),
+    applied = apply_rule_settings(result, {"a.rule": "warn", "a.other": "off"})
+
+    assert applied.outcome is Outcome.RAN
+    assert [(f.rule_id, f.severity, f.message) for f in applied.findings] == [
+        ("a.rule", Severity.WARN, "first"),
+        ("a.rule", Severity.WARN, "second"),
     ]
 
 
-def test_findings_can_be_a_one_shot_iterator():
-    assert applied({"a.one": "off"}, iter(FINDINGS)) == [FINDINGS[1]]
+def test_a_rule_that_passed_still_passed_with_a_severity_configured():
+    assert apply_rule_settings(RuleResult("a.rule"), {"a.rule": "error"}) == RuleResult("a.rule")
 
 
-def test_enabled_rules_leaves_out_the_rules_that_are_off_and_keeps_the_order():
-    rules = [Rule(f"a.{name}", "", Severity.WARN, lambda snapshot: []) for name in "abc"]
+def test_a_configured_severity_does_not_make_a_skipped_rule_run():
+    skipped = RuleResult.skipped("a.rule", "because")
 
-    assert [rule.id for rule in enabled_rules(rules, {})] == ["a.a", "a.b", "a.c"]
-    assert [rule.id for rule in enabled_rules(rules, {"a.b": "off"})] == ["a.a", "a.c"]
-    assert [rule.id for rule in enabled_rules(rules, {"a.a": "error", "a.c": "warn"})] == [
-        "a.a",
-        "a.b",
-        "a.c",
-    ]
-    assert enabled_rules(rules, {"a.a": "off", "a.b": "off", "a.c": "off"}) == []
-
-
-def test_enabled_rules_works_for_rule_descriptions_too():
-    infos = [RuleInfo("a.x", "X.", Severity.WARN), RuleInfo("a.y", "Y.", Severity.ERROR)]
-
-    assert enabled_rules(infos, {"a.x": "off"}) == [infos[1]]
+    assert apply_rule_settings(skipped, {"a.rule": "error"}) == skipped
