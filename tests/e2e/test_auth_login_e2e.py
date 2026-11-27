@@ -64,6 +64,21 @@ def test_login_status_doctor_and_logout(project, oauth_url, browser):
     assert "was not logged in" in project.mcph("auth", "logout", "docs").output
 
 
+def test_login_still_works_with_the_issuer_trailing_slash_option_on(
+    project, start_http_server, browser
+):
+    # The server is consistent, so the option has nothing to tolerate: it must do no harm.
+    url = start_http_server(auth="oauth")
+    project.write_config(
+        project.http_entry("docs", url, oauth={"ignore_issuer_trailing_slash": True})
+    )
+
+    login = project.mcph("auth", "login", "docs")
+
+    assert login.exit_code == 0, login.output
+    assert project.doctor().exit_code == 0
+
+
 def test_login_is_quiet_apart_from_what_the_user_needs(project, oauth_url, browser):
     login = project.mcph("auth", "login", "docs")
 

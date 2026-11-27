@@ -50,18 +50,22 @@ class Project:
 
     @staticmethod
     def http_entry(
-        name: str, url: str, token_env: str | None = None, oauth: bool = False
+        name: str,
+        url: str,
+        token_env: str | None = None,
+        oauth: bool | dict = False,
     ) -> dict:
         """A ``servers`` entry for an already running HTTP server.
 
         With ``token_env`` the entry sends the bearer token from that variable;
-        with ``oauth`` it uses the token stored by ``mcph auth login``.
+        with ``oauth`` it uses the token stored by ``mcph auth login`` (pass a
+        dict for extra ``auth`` settings).
         """
         entry = {"name": name, "transport": "http", "url": url}
         if token_env:
             entry["auth"] = {"type": "bearer", "token_env": token_env}
         elif oauth:
-            entry["auth"] = {"type": "oauth"}
+            entry["auth"] = {"type": "oauth", **(oauth if isinstance(oauth, dict) else {})}
         return entry
 
     def write_config(self, *servers: dict) -> Path:

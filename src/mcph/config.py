@@ -91,6 +91,12 @@ class OAuthAuthConfig(_StrictModel):
 
     type: Literal["oauth"]
     scopes: list[str] = Field(default_factory=list)
+    ignore_issuer_trailing_slash: bool = False
+    """Accept a server whose metadata announces its authorization server as
+    ``https://host/`` while that server's own metadata says ``https://host``.
+
+    The standard (RFC 8414) wants the two to be identical, so this is off by
+    default; it tolerates that one difference and nothing else."""
 
     @field_validator("scopes")
     @classmethod

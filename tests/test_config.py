@@ -534,3 +534,32 @@ def test_bearer_does_not_take_scopes(tmp_path):
 
     assert "servers[0].auth.scopes: Extra inputs are not permitted" in message
 
+
+def test_the_issuer_trailing_slash_is_not_ignored_unless_asked(tmp_path):
+    default = load(tmp_path, oauth_server("{type: oauth}")).servers[0].auth
+    asked = load(
+        tmp_path, oauth_server("{type: oauth, ignore_issuer_trailing_slash: true}")
+    ).servers[0].auth
+
+    assert default.ignore_issuer_trailing_slash is False
+    assert asked.ignore_issuer_trailing_slash is True
+
+
+def test_ignore_issuer_trailing_slash_must_be_a_boolean(tmp_path):
+    message = error_for(
+        tmp_path, oauth_server("{type: oauth, ignore_issuer_trailing_slash: maybe}")
+    )
+
+    assert "servers[0].auth.ignore_issuer_trailing_slash:" in message
+
+
+def test_bearer_does_not_take_ignore_issuer_trailing_slash(tmp_path):
+    message = error_for(
+        tmp_path,
+        oauth_server(
+            "{type: bearer, token_env: TOKEN, ignore_issuer_trailing_slash: true}"
+        ),
+    )
+
+    assert "servers[0].auth.ignore_issuer_trailing_slash: Extra inputs" in message
+

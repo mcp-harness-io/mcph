@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
+from mcp.client.auth.utils import issuers_match
 
 from mcph.config import HttpServerConfig, OAuthAuthConfig
 from mcph.token_store import StoredToken, TokenStore
@@ -26,14 +27,47 @@ class LoginError(Exception):
     """The sign-in did not complete."""
 
 
+class _SameIssuer(str):
+    """An issuer that also equals its spelling with or without a root trailing slash.
+
+    The SDK checks that the issuer in an authorization server's metadata is the
+    one the resource server announced, using ``!=``; this makes that comparison
+    use the SDK's own :func:`issuers_match`, which treats ``https://host`` and
+    ``https://host/`` as the same server and nothing else (another host, scheme,
+    port or path still differs).
+    """
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and issuers_match(str(self), str(other))
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    __hash__ = str.__hash__
+
+
 class _AnnouncingOAuth(OAuth):
-    """FastMCP's browser flow, which also tells the user the authorization URL."""
+    """FastMCP's browser flow, which also tells the user the authorization URL.
+
+    With ``ignore_issuer_trailing_slash`` a root issuer announced as
+    ``https://host/`` is accepted when its metadata says ``https://host`` (or the
+    other way round).
+    """
 
     def __init__(
-        self, *args: object, announce: Callable[[str], None], **kwargs: object
+        self,
+        *args: object,
+        announce: Callable[[str], None],
+        ignore_issuer_trailing_slash: bool = False,
+        **kwargs: object,
     ) -> None:
         self._announce = announce
+        self._ignore_issuer_trailing_slash = ignore_issuer_trailing_slash
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+
+    def _expected_issuer(self) -> str:
+        issuer = super()._expected_issuer()
+        return _SameIssuer(issuer) if self._ignore_issuer_trailing_slash else issuer
 
     async def redirect_handler(self, authorization_url: str) -> None:
         self._announce(authorization_url)
@@ -67,6 +101,7 @@ async def login(
         client_name="mcph",
         callback_timeout=timeout,
         announce=announce,
+        ignore_issuer_trailing_slash=auth.ignore_issuer_trailing_slash,
     )
     try:
         with _quiet_logging():
@@ -75,7 +110,11 @@ async def login(
                     pass
     except Exception as exc:
         store.delete(server)
-        raise LoginError(_failure_message(exc, timeout)) from exc
+        raise LoginError(
+            _failure_message(
+                exc, timeout, ignoring_slash=auth.ignore_issuer_trailing_slash
+            )
+        ) from exc
 
     token = await store.load(server)
     if token is None:
@@ -88,13 +127,20 @@ async def login(
     return token
 
 
-def _failure_message(exc: BaseException, timeout: float) -> str:
+def _failure_message(
+    exc: BaseException, timeout: float, *, ignoring_slash: bool = False
+) -> str:
     if _caused_by(exc, TimeoutError):
         return f"timed out after {timeout:g} s waiting for the sign-in to finish"
     while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
         exc = exc.exceptions[0]  # the first real error inside the group
-    text = str(exc) or type(exc).__name__
-    return text.removeprefix("Client failed to connect: ")
+    text = (str(exc) or type(exc).__name__).removeprefix("Client failed to connect: ")
+    if "issuer mismatch" in text and not ignoring_slash:
+        text += (
+            " (if the two differ only by a trailing slash, set "
+            "`ignore_issuer_trailing_slash: true` under `auth` to accept that)"
+        )
+    return text
 
 
 def _caused_by(exc: BaseException, kind: type[BaseException]) -> bool:

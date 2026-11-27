@@ -88,6 +88,8 @@ Logged in to docs; the token expires in 15 min.
 
 Tokens are kept in a file only you can read, under mcph's state directory (set `MCPH_STATE_DIR` to put it elsewhere). mcph does not keep refresh tokens.
 
+If login stops with `Authorization server metadata issuer mismatch`, the server announces its authorization server differently from the way that server describes itself. The standard wants the two to be identical, so the right fix is on the server. When the only difference is a trailing slash (`https://auth.example.com/` against `https://auth.example.com`), you can have mcph accept it with `ignore_issuer_trailing_slash: true` under `auth`. It tolerates that one difference and nothing else.
+
 ## Rules
 
 `mcph doctor` checks every server that starts against these built-in rules:
@@ -108,7 +110,7 @@ Warnings do not fail the run unless you pass `--strict`.
   - `url` (`http`): the Streamable HTTP endpoint of a server you have already started, such as `http://localhost:8080/mcp`. mcph does not start it.
   - `auth` (`http`, optional), one of:
     - `type: bearer` and `token_env`, the name of an environment variable that holds a bearer token. mcph reads the token from its own environment, never from the YAML, and sends it as `Authorization: Bearer ...` to the server's URL only; it is never printed.
-    - `type: oauth` and optional `scopes`: sign in through the browser with `mcph auth login <server>` (see [OAuth login](#oauth-login)).
+    - `type: oauth`, optional `scopes` and optional `ignore_issuer_trailing_slash`: sign in through the browser with `mcph auth login <server>` (see [OAuth login](#oauth-login)).
   - `primary`: optional `true` for the server you are developing (at most one).
 
 `stdio` servers run from the directory containing `mcph.yaml`, with a minimal environment (`HOME`, `PATH`, ...) plus the `env` you list. Unknown keys are rejected, so typos are reported.
