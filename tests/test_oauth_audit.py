@@ -5,12 +5,14 @@ import pytest
 
 from mcph.auth_probe import AuthInfo
 from mcph.oauth_audit import (
+    NO_AUTHORIZATION_SERVER,
+    NO_METADATA,
     Discovery,
     audit_authorization_server,
     check_metadata,
     discover_metadata,
 )
-from mcph.rules import OAUTH_RULES, Finding, Severity
+from mcph.rules import OAUTH_RULES, Finding, Outcome, RuleResult, Severity
 
 RESOURCE = "https://rs.test/mcp"
 ANNOUNCED = "https://as.test"
@@ -325,7 +327,7 @@ def test_no_credential_is_ever_sent():
 # --- auditing what a server announced --------------------------------------------------------
 
 
-def audit(auth: AuthInfo, handler, **options) -> tuple[Finding, ...]:
+def audit(auth: AuthInfo, handler, **options) -> tuple[RuleResult, ...]:
     transport = httpx2.MockTransport(handler)
     return asyncio.run(
         audit_authorization_server(
@@ -334,29 +336,62 @@ def audit(auth: AuthInfo, handler, **options) -> tuple[Finding, ...]:
     )
 
 
+def findings_of(results: tuple[RuleResult, ...]) -> list[Finding]:
+    return [finding for result in results for finding in result.findings]
+
+
+OAUTH_IDS = [rule.id for rule in OAUTH_RULES]
+
+
 def test_nothing_is_checked_when_no_authorization_server_was_announced():
     server = Server({})
 
-    findings = audit(AuthInfo(challenge='Bearer realm="x"'), server)
+    results = audit(AuthInfo(challenge='Bearer realm="x"'), server)
 
-    assert findings == ()
+    assert results == tuple(
+        RuleResult.skipped(rule_id, NO_AUTHORIZATION_SERVER) for rule_id in OAUTH_IDS
+    )
     assert server.requests == []
+
+
+def test_a_sound_authorization_server_passes_every_check():
+    server = Server({ROOT_8414: httpx2.Response(200, json=GOOD)})
+    auth = AuthInfo(challenge=None, authorization_servers=(ANNOUNCED,))
+
+    results = audit(auth, server)
+
+    assert results == tuple(RuleResult(rule_id) for rule_id in OAUTH_IDS)
+    assert all(result.outcome is Outcome.RAN for result in results)
 
 
 def test_the_first_announced_authorization_server_is_the_one_checked():
     server = Server({ROOT_8414: httpx2.Response(200, json=GOOD)})
     auth = AuthInfo(challenge=None, authorization_servers=(ANNOUNCED, "https://other.test"))
 
-    assert audit(auth, server) == ()
+    assert findings_of(audit(auth, server)) == []
     assert server.urls == [ROOT_8414]
+
+
+def test_each_finding_is_in_the_result_of_its_own_rule():
+    broken = changed(code_challenge_methods_supported=None, registration_endpoint=None)
+    server = Server({ROOT_8414: httpx2.Response(200, json=broken)})
+    auth = AuthInfo(challenge=None, authorization_servers=(ANNOUNCED,))
+
+    results = {result.rule_id: result for result in audit(auth, server)}
+
+    assert list(results) == OAUTH_IDS
+    assert results["oauth.metadata"] == RuleResult("oauth.metadata")
+    assert results["oauth.issuer"] == RuleResult("oauth.issuer")
+    assert [f.rule_id for f in results["oauth.pkce"].findings] == ["oauth.pkce"]
+    assert [f.rule_id for f in results["oauth.registration"].findings] == ["oauth.registration"]
 
 
 def test_the_trailing_slash_setting_is_passed_through():
     server = Server({ROOT_8414: httpx2.Response(200, json=changed(issuer="https://as.test"))})
     auth = AuthInfo(challenge=None, authorization_servers=("https://as.test/",))
 
-    [plain] = audit(auth, server)
-    [accepted] = audit(auth, server, issuer_slash_accepted=True)
+    [plain] = findings_of(audit(auth, server))
+    [accepted] = findings_of(audit(auth, server, issuer_slash_accepted=True))
 
     assert "set `ignore_issuer_trailing_slash: true`" in plain.message
     assert "makes mcph accept" in accepted.message
@@ -368,7 +403,19 @@ def test_an_authorization_server_that_cannot_be_reached_is_reported_not_raised()
 
     auth = AuthInfo(challenge=None, authorization_servers=(ANNOUNCED,))
 
-    [finding] = audit(auth, refuse)
+    results = audit(auth, refuse)
 
+    [finding] = findings_of(results)
     assert finding.rule_id == "oauth.metadata"
     assert "ConnectError" in finding.message
+
+
+def test_without_metadata_only_its_lookup_is_checked_and_the_other_checks_are_skipped():
+    auth = AuthInfo(challenge=None, authorization_servers=(ANNOUNCED,))
+
+    results = audit(auth, Server({}))  # every URL is a 404
+
+    metadata, *others = results
+    assert [f.rule_id for f in metadata.findings] == ["oauth.metadata"]
+    assert metadata.outcome is Outcome.RAN
+    assert others == [RuleResult.skipped(rule_id, NO_METADATA) for rule_id in OAUTH_IDS[1:]]

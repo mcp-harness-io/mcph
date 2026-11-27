@@ -1,4 +1,4 @@
-"""Applying the rule settings of ``mcph.yaml`` to rules and findings.
+"""Applying the rule settings of ``mcph.yaml`` to rules and their results.
 
 ``doctor.rules`` maps a rule id to ``error``, ``warn`` or ``off``. Rules that are
 not mentioned keep their default severity.
@@ -6,26 +6,32 @@ not mentioned keep their default severity.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 
-from mcph.rules.base import Finding, RuleInfo, Severity
+from mcph.rules.base import RuleResult, Severity
 
 OFF = "off"
 
 
-def enabled_rules[R: RuleInfo](rules: Iterable[R], settings: Mapping[str, str]) -> list[R]:
-    """The ``rules`` that are not turned off, in their order."""
-    return [rule for rule in rules if settings.get(rule.id) != OFF]
+def is_off(rule_id: str, settings: Mapping[str, str]) -> bool:
+    """Whether the settings turn the rule off, so it must not run."""
+    return settings.get(rule_id) == OFF
 
 
-def apply_rule_settings(
-    findings: Iterable[Finding], settings: Mapping[str, str]
-) -> Iterator[Finding]:
-    """Drop the findings of rules set to ``off``; give the rest the configured severity."""
-    for finding in findings:
-        setting = settings.get(finding.rule_id)
-        if setting is None:
-            yield finding
-        elif setting != OFF:
-            yield replace(finding, severity=Severity(setting))
+def apply_rule_settings(result: RuleResult, settings: Mapping[str, str]) -> RuleResult:
+    """The result as ``mcph.yaml`` wants it shown.
+
+    A rule that is set to ``off`` has no findings and says so; the findings of a
+    rule with another setting get the configured severity.
+    """
+    setting = settings.get(result.rule_id)
+    if setting is None:
+        return result
+    if setting == OFF:
+        return RuleResult.off(result.rule_id)
+    severity = Severity(setting)
+    return replace(
+        result,
+        findings=tuple(replace(finding, severity=severity) for finding in result.findings),
+    )

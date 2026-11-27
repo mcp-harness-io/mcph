@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,12 +19,18 @@ from mcph.rules import (
     BUILTIN_RULES,
     OAUTH_RULES,
     Finding,
+    Outcome,
     Rule,
+    RuleResult,
     Severity,
     apply_rule_settings,
-    enabled_rules,
-    run_rules,
+    is_off,
+    run_rule,
 )
+
+# Why rules were skipped when the rule itself has no say in it.
+NO_CONNECTION = "mcph could not connect to the server"
+NOT_NEEDED = "not needed, the server accepted the connection"
 
 
 @dataclass(frozen=True)
@@ -34,7 +40,13 @@ class ServerReport:
     name: str
     snapshot: ServerSnapshot | None = None
     error: ServerError | None = None
-    findings: tuple[Finding, ...] = ()
+    rules: tuple[RuleResult, ...] = ()
+    """What happened to each rule on this server, in the order they are shown."""
+
+    @property
+    def findings(self) -> tuple[Finding, ...]:
+        """The problems the rules found, in order."""
+        return tuple(finding for result in self.rules for finding in result.findings)
 
     @property
     def ok(self) -> bool:
@@ -77,11 +89,11 @@ async def run_doctor(
 
     Each server that starts is also checked against ``rules``. A failing server
     does not stop the others from being checked. The ``doctor.rules`` settings of
-    the config decide which rules run and how serious their findings are.
+    the config decide which rules run and how serious their findings are, and the
+    report says what happened to every rule.
     """
     settings = config.doctor.rules
-    rules = enabled_rules(rules, settings)
-    audit_oauth = bool(enabled_rules(OAUTH_RULES, settings))
+    rules = tuple(rules)
     reports: list[ServerReport] = []
     for server in config.servers:
         snapshot = error = None
@@ -91,22 +103,58 @@ async def run_doctor(
             )
         except ServerError as exc:
             error = exc
-            found = await _oauth_findings(server, exc, timeout) if audit_oauth else ()
-        else:
-            found = run_rules(snapshot, rules)
-        findings = tuple(apply_rule_settings(found, settings))
+        results = [
+            *_snapshot_results(snapshot, rules, settings),
+            *await _oauth_results(server, error, timeout, settings),
+        ]
         reports.append(
-            ServerReport(server.name, snapshot=snapshot, error=error, findings=findings)
+            ServerReport(
+                server.name, snapshot=snapshot, error=error, rules=tuple(results)
+            )
         )
     return DoctorReport(tuple(reports))
 
 
-async def _oauth_findings(
-    server: ServerConfig, error: ServerError, timeout: float
-) -> tuple[Finding, ...]:
-    """Problems with the OAuth setup of a server that needs authentication."""
-    if error.auth is None or not isinstance(server, HttpServerConfig):
-        return ()
+def _snapshot_results(
+    snapshot: ServerSnapshot | None, rules: Iterable[Rule], settings: Mapping[str, str]
+) -> list[RuleResult]:
+    """The rules that look at what a server exposes, run on its snapshot."""
+    results = []
+    for rule in rules:
+        if is_off(rule.id, settings):  # it does not run
+            results.append(RuleResult.off(rule.id))
+        elif snapshot is None:
+            results.append(RuleResult.skipped(rule.id, NO_CONNECTION))
+        else:
+            results.append(apply_rule_settings(run_rule(rule, snapshot), settings))
+    return results
+
+
+async def _oauth_results(
+    server: ServerConfig,
+    error: ServerError | None,
+    timeout: float,
+    settings: Mapping[str, str],
+) -> list[RuleResult]:
+    """The OAuth checks, which are about HTTP servers only."""
+    if not isinstance(server, HttpServerConfig):
+        return []
+    if all(is_off(rule.id, settings) for rule in OAUTH_RULES):
+        return [RuleResult.off(rule.id) for rule in OAUTH_RULES]  # nothing to ask
+    return [
+        apply_rule_settings(result, settings)
+        for result in await _audit(server, error, timeout)
+    ]
+
+
+async def _audit(
+    server: HttpServerConfig, error: ServerError | None, timeout: float
+) -> tuple[RuleResult, ...]:
+    """What the OAuth checks make of a server, as if none of them were turned off."""
+    if error is None:
+        return _skipped_oauth_rules(NOT_NEEDED)
+    if error.auth is None:
+        return _skipped_oauth_rules(NO_CONNECTION)
     accepted = (
         isinstance(server.auth, OAuthAuthConfig)
         and server.auth.ignore_issuer_trailing_slash
@@ -114,6 +162,10 @@ async def _oauth_findings(
     return await audit_authorization_server(
         error.auth, server.url, timeout=timeout, issuer_slash_accepted=accepted
     )
+
+
+def _skipped_oauth_rules(reason: str) -> tuple[RuleResult, ...]:
+    return tuple(RuleResult.skipped(rule.id, reason) for rule in OAUTH_RULES)
 
 
 def format_report(report: DoctorReport, *, config_path: Path | None = None) -> str:
@@ -128,7 +180,6 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
         lines.append(server.name)
         if server.snapshot is not None:
             lines.append(_status("OK", _describe(server.snapshot)))
-            lines.extend(_finding_line(finding) for finding in server.findings)
         elif server.error is not None:
             lines.append(_status("ERROR", server.error.message))
             if server.error.auth is not None:
@@ -141,7 +192,7 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
                     _continuation("  " + line)
                     for line in server.error.stderr_tail.splitlines()
                 )
-            lines.extend(_finding_line(finding) for finding in server.findings)
+        lines.extend(_rule_lines(server.rules))
 
     failed = sum(1 for server in report.servers if not server.ok)
     summary = (
@@ -198,6 +249,29 @@ def _auth_lines(auth: AuthInfo) -> list[str]:
         lines.append(f"{label}: {', '.join(servers)}")
     if auth.scopes:
         lines.append(f"scopes: {', '.join(auth.scopes)}")
+    return lines
+
+
+def _rule_lines(results: Iterable[RuleResult]) -> list[str]:
+    """One line per rule that ran or is off; skipped rules share a line per reason."""
+    results = list(results)
+    skipped: dict[str, list[str]] = {}
+    for result in results:
+        if result.outcome is Outcome.SKIPPED:
+            skipped.setdefault(result.reason, []).append(result.rule_id)
+
+    lines: list[str] = []
+    for result in results:
+        if result.outcome is Outcome.OFF:
+            lines.append(_status("OFF", result.rule_id))
+        elif result.outcome is Outcome.SKIPPED:
+            ids = skipped.pop(result.reason, None)  # the first of its kind lists them all
+            if ids is not None:
+                lines.append(_status("SKIP", f"{', '.join(ids)}: {result.reason}"))
+        elif result.findings:
+            lines.extend(_finding_line(finding) for finding in result.findings)
+        else:
+            lines.append(_status("OK", result.rule_id))
     return lines
 
 

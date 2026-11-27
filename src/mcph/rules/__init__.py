@@ -4,9 +4,18 @@
 ``mcph.yaml``, and ``builtin`` holds the rules that ship with mcph.
 """
 
-from mcph.rules.base import Finding, Rule, RuleInfo, Severity, run_rules
+from mcph.rules.base import (
+    Finding,
+    Outcome,
+    Rule,
+    RuleInfo,
+    RuleResult,
+    Severity,
+    run_rule,
+    run_rules,
+)
 from mcph.rules.builtin import BUILTIN_RULES, OAUTH_RULES
-from mcph.rules.settings import apply_rule_settings, enabled_rules
+from mcph.rules.settings import apply_rule_settings, is_off
 
 
 def known_rules() -> dict[str, RuleInfo]:
@@ -18,11 +27,14 @@ __all__ = [
     "BUILTIN_RULES",
     "OAUTH_RULES",
     "Finding",
+    "Outcome",
     "Rule",
     "RuleInfo",
+    "RuleResult",
     "Severity",
     "apply_rule_settings",
-    "enabled_rules",
+    "is_off",
     "known_rules",
+    "run_rule",
     "run_rules",
 ]

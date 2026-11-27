@@ -19,8 +19,17 @@ from mcp.client.auth.utils import (
 )
 
 from mcph.auth_probe import AuthInfo
-from mcph.rules import Finding, Severity
-from mcph.rules.builtin.oauth import ISSUER, METADATA, PKCE, REGISTRATION
+from mcph.rules import Finding, RuleResult, Severity
+from mcph.rules.builtin.oauth import (
+    ISSUER,
+    METADATA,
+    OAUTH_RULES,
+    PKCE,
+    REGISTRATION,
+)
+
+NO_AUTHORIZATION_SERVER = "the server announced no authorization server"
+NO_METADATA = "the authorization server's metadata was not found"
 
 
 @dataclass(frozen=True)
@@ -190,20 +199,40 @@ async def audit_authorization_server(
     timeout: float,
     issuer_slash_accepted: bool = False,
     transport: httpx2.AsyncBaseTransport | None = None,
-) -> tuple[Finding, ...]:
+) -> tuple[RuleResult, ...]:
     """Check the authorization server a server announced in what it told us.
 
-    Does nothing if the server announced none (there is nothing to check). Like
-    a client, it looks at the first one announced.
+    Gives one result per ``oauth.*`` rule. Like a client, it looks at the first
+    authorization server announced; if there is none, or its metadata cannot be
+    found, the checks that need it are skipped.
     """
     if not auth.authorization_servers:
-        return ()
+        return tuple(
+            RuleResult.skipped(rule.id, NO_AUTHORIZATION_SERVER)
+            for rule in OAUTH_RULES
+        )
     announced = auth.authorization_servers[0]
     discovery = await discover_metadata(
         announced, resource_url, timeout=timeout, transport=transport
     )
+    findings = check_metadata(
+        announced, discovery, issuer_slash_accepted=issuer_slash_accepted
+    )
     return tuple(
-        check_metadata(
-            announced, discovery, issuer_slash_accepted=issuer_slash_accepted
-        )
+        _result(rule.id, findings, metadata_found=discovery.metadata is not None)
+        for rule in OAUTH_RULES
+    )
+
+
+def _result(
+    rule_id: str, findings: list[Finding], *, metadata_found: bool
+) -> RuleResult:
+    # Without the metadata only whether it can be found has been checked.
+    if not metadata_found and rule_id != METADATA:
+        return RuleResult.skipped(rule_id, NO_METADATA)
+    return RuleResult(
+        rule_id,
+        findings=tuple(
+            finding for finding in findings if finding.rule_id == rule_id
+        ),
     )
