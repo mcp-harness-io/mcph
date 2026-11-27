@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from mcph.mcp_client import (
     ServerSnapshot,
     snapshot_stdio_server,
 )
+from mcph.rules import BUILTIN_RULES, Finding, Rule, Severity, run_rules
 
 
 @dataclass(frozen=True)
@@ -21,10 +23,18 @@ class ServerReport:
     name: str
     snapshot: ServerSnapshot | None = None
     error: ServerError | None = None
+    findings: tuple[Finding, ...] = ()
 
     @property
     def ok(self) -> bool:
-        return self.error is None
+        """No failure to start or query the server, and no error-level finding."""
+        return self.error is None and not any(
+            finding.severity is Severity.ERROR for finding in self.findings
+        )
+
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for finding in self.findings if finding.severity is Severity.WARN)
 
 
 @dataclass(frozen=True)
@@ -37,14 +47,27 @@ class DoctorReport:
     def ok(self) -> bool:
         return all(server.ok for server in self.servers)
 
+    @property
+    def warning_count(self) -> int:
+        return sum(server.warning_count for server in self.servers)
+
+    def passed(self, *, strict: bool = False) -> bool:
+        """Whether the run succeeded; with ``strict``, warnings count as failures."""
+        return self.ok and not (strict and self.warning_count)
+
 
 async def run_doctor(
-    config: Config, *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    config: Config,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    rules: Iterable[Rule] = BUILTIN_RULES,
 ) -> DoctorReport:
     """Check every server in ``config``, one after another.
 
-    A failing server does not stop the others from being checked.
+    Each server that starts is also checked against ``rules``. A failing server
+    does not stop the others from being checked.
     """
+    rules = tuple(rules)
     reports: list[ServerReport] = []
     for server in config.servers:
         try:
@@ -54,7 +77,10 @@ async def run_doctor(
         except ServerError as exc:
             reports.append(ServerReport(server.name, error=exc))
         else:
-            reports.append(ServerReport(server.name, snapshot=snapshot))
+            findings = tuple(run_rules(snapshot, rules))
+            reports.append(
+                ServerReport(server.name, snapshot=snapshot, findings=findings)
+            )
     return DoctorReport(tuple(reports))
 
 
@@ -70,6 +96,7 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
         lines.append(server.name)
         if server.snapshot is not None:
             lines.append(_status("OK", _describe(server.snapshot)))
+            lines.extend(_finding_line(finding) for finding in server.findings)
         elif server.error is not None:
             lines.append(_status("ERROR", server.error.message))
             if server.error.stderr_tail:
@@ -80,10 +107,13 @@ def format_report(report: DoctorReport, *, config_path: Path | None = None) -> s
                 )
 
     failed = sum(1 for server in report.servers if not server.ok)
-    lines.append("")
-    lines.append(
-        f"{failed} of {_plural(count, 'server')} failed." if failed else "All servers OK."
+    summary = (
+        f"{failed} of {_plural(count, 'server')} failed" if failed else "All servers OK"
     )
+    if report.warning_count:
+        summary += f", {_plural(report.warning_count, 'warning')}"
+    lines.append("")
+    lines.append(summary + ".")
     return "\n".join(lines)
 
 
@@ -99,6 +129,11 @@ def _describe(snapshot: ServerSnapshot) -> str:
     if details:
         text += f" ({', '.join(details)})"
     return f"{text}, {_plural(len(snapshot.tools), 'tool')}"
+
+
+def _finding_line(finding: Finding) -> str:
+    label = finding.severity.value.upper()
+    return _status(label, f"{finding.rule_id}: {finding.message}")
 
 
 def _status(label: str, text: str) -> str:

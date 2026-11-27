@@ -56,10 +56,18 @@ def doctor(
             help="Seconds to wait for each server to start and answer.",
         ),
     ] = DEFAULT_TIMEOUT_SECONDS,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict", help="Also exit with 1 if there are warnings (for CI)."
+        ),
+    ] = False,
 ) -> None:
     """Start the configured MCP servers and check that they respond.
 
-    Exits with 1 if any server fails, and with 2 if the config is invalid.
+    Also checks what each server exposes against the built-in rules.
+    Exits with 1 if a server fails (or, with --strict, has warnings), and with 2
+    if the config is invalid.
     """
     state = ctx.ensure_object(AppState)
     try:
@@ -70,7 +78,7 @@ def doctor(
 
     report = asyncio.run(run_doctor(config, timeout=timeout))
     typer.echo(format_report(report, config_path=config.path))
-    raise typer.Exit(0 if report.ok else 1)
+    raise typer.Exit(0 if report.passed(strict=strict) else 1)
 
 
 @app.command()
