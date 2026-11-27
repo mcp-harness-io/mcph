@@ -8,12 +8,13 @@
 | src/mcph/auth\_probe.py  |       81 |        0 |     100% |           |
 | src/mcph/cli.py          |       96 |        0 |     100% |           |
 | src/mcph/config.py       |      156 |        0 |     100% |           |
-| src/mcph/doctor.py       |      110 |        0 |     100% |           |
-| src/mcph/mcp\_client.py  |      123 |        0 |     100% |           |
+| src/mcph/doctor.py       |      118 |        0 |     100% |           |
+| src/mcph/mcp\_client.py  |      128 |        0 |     100% |           |
+| src/mcph/oauth\_audit.py |       79 |        0 |     100% |           |
 | src/mcph/oauth\_login.py |       83 |        0 |     100% |           |
 | src/mcph/rules.py        |       39 |        0 |     100% |           |
 | src/mcph/token\_store.py |       85 |        0 |     100% |           |
-| **TOTAL**                |  **774** |    **0** | **100%** |           |
+| **TOTAL**                |  **866** |    **0** | **100%** |           |
 
 
 ## Setup coverage badge
