@@ -23,7 +23,14 @@ from fastmcp.client.transports import (
 )
 
 from mcph.auth_probe import AuthInfo, probe_auth
-from mcph.config import HttpServerConfig, ServerConfig, StdioServerConfig
+from mcph.config import (
+    BearerAuthConfig,
+    HttpServerConfig,
+    OAuthAuthConfig,
+    ServerConfig,
+    StdioServerConfig,
+)
+from mcph.token_store import StoredToken, TokenStore, TokenStoreError
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
@@ -130,18 +137,20 @@ async def snapshot_http_server(
     server: HttpServerConfig,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    store: TokenStore | None = None,
 ) -> ServerSnapshot:
     """Connect to a running Streamable HTTP server, handshake and list its tools.
 
-    mcph does not start or stop the server. If the server has ``auth``, the
-    bearer token is read from the environment variable it names and sent with
-    every request; it never appears in an error. Raises :class:`ServerError` if
-    the token is missing, the server cannot be reached, does not answer within
-    ``timeout`` seconds, or fails while being queried; the message names the URL.
-    If the server refuses us (401, or 403 for a missing scope), the error says
-    why and carries what the server advertises (:attr:`ServerError.auth`).
+    mcph does not start or stop the server. If the server has ``auth``, a bearer
+    token is sent with every request: read from the environment variable the
+    config names, or, for ``type: oauth``, the token ``mcph auth login`` stored in
+    ``store``. It never appears in an error. Raises :class:`ServerError` if the
+    token is missing or expired, the server cannot be reached, does not answer
+    within ``timeout`` seconds, or fails while being queried; the message names
+    the URL. If the server refuses us (401, or 403 for a missing scope), the error
+    says why and carries what the server advertises (:attr:`ServerError.auth`).
     """
-    token = _read_token(server)
+    token = await _resolve_token(server, store or TokenStore())
     try:
         return await _snapshot(
             StreamableHttpTransport(url=server.url, auth=token),
@@ -159,9 +168,30 @@ async def snapshot_http_server(
         raise ServerError(_auth_message(server, auth), auth=auth) from error
 
 
+async def _resolve_token(server: HttpServerConfig, store: TokenStore) -> str | None:
+    """The token to send to ``server``, or ``None`` if it has no ``auth``."""
+    if isinstance(server.auth, OAuthAuthConfig):
+        return await _read_stored_token(server, store)
+    return _read_token(server)
+
+
+async def _read_stored_token(server: HttpServerConfig, store: TokenStore) -> str:
+    """The access token ``mcph auth login`` stored; it must exist and be unexpired."""
+    login = f"run `mcph auth login {server.name}`"
+    try:
+        stored: StoredToken | None = await store.load(server)
+    except TokenStoreError as exc:
+        raise ServerError(f"{exc} ({login})") from exc
+    if stored is None:
+        raise ServerError(f"not logged in ({login})")
+    if stored.expired():
+        raise ServerError(f"the stored token {stored.describe()} ({login})")
+    return stored.access_token
+
+
 def _read_token(server: HttpServerConfig) -> str | None:
-    """The bearer token from the server's ``auth.token_env``, or ``None`` if no auth."""
-    if server.auth is None:
+    """The bearer token from the server's ``auth.token_env``, or ``None`` if none."""
+    if not isinstance(server.auth, BearerAuthConfig):
         return None
     name = server.auth.token_env
     value = os.environ.get(name)
@@ -183,8 +213,16 @@ def _auth_message(server: HttpServerConfig, auth: AuthInfo) -> str:
     if server.auth is None:
         return (
             f"authentication required: the server answered {auth.status} "
-            "(send a bearer token with `auth` in mcph.yaml)"
+            "(add `auth` to this server in mcph.yaml)"
         )
+    if isinstance(server.auth, OAuthAuthConfig):
+        again = f"run `mcph auth login {server.name}` again"
+        if auth.error == "insufficient_scope":
+            return (
+                "the stored token lacks a scope the server requires "
+                f"(add it to `scopes`, then {again})"
+            )
+        return f"the server rejected the stored token (HTTP {auth.status}); {again}"
     variable = server.auth.token_env
     if auth.error == "insufficient_scope":
         return f"the token in ${variable} lacks a scope the server requires"

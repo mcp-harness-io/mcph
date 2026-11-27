@@ -5,9 +5,11 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+import httpx2
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -47,23 +49,35 @@ class Project:
         }
 
     @staticmethod
-    def http_entry(name: str, url: str, token_env: str | None = None) -> dict:
+    def http_entry(
+        name: str,
+        url: str,
+        token_env: str | None = None,
+        oauth: bool | dict = False,
+    ) -> dict:
         """A ``servers`` entry for an already running HTTP server.
 
-        With ``token_env`` the entry sends the bearer token from that variable.
+        With ``token_env`` the entry sends the bearer token from that variable;
+        with ``oauth`` it uses the token stored by ``mcph auth login`` (pass a
+        dict for extra ``auth`` settings).
         """
         entry = {"name": name, "transport": "http", "url": url}
         if token_env:
             entry["auth"] = {"type": "bearer", "token_env": token_env}
+        elif oauth:
+            entry["auth"] = {"type": "oauth", **(oauth if isinstance(oauth, dict) else {})}
         return entry
 
     def write_config(self, *servers: dict) -> Path:
         self.config_path.write_text(yaml.safe_dump({"servers": list(servers)}))
         return self.config_path
 
+    def mcph(self, *args: str):
+        """Run ``mcph -c <config> <args>`` in-process; servers are real subprocesses."""
+        return CliRunner().invoke(app, ["-c", str(self.config_path), *args])
+
     def doctor(self, *args: str):
-        """Run ``mcph -c <config> doctor`` in-process; the servers are real subprocesses."""
-        return CliRunner().invoke(app, ["-c", str(self.config_path), "doctor", *args])
+        return self.mcph("doctor", *args)
 
 
 @pytest.fixture
@@ -189,4 +203,46 @@ def plain_401_server_url():
     server.shutdown()
     server.server_close()
     thread.join()
+
+
+@pytest.fixture
+def browser(monkeypatch: pytest.MonkeyPatch):
+    """Replace the web browser by a user who approves every sign-in at once.
+
+    Yields the list of URLs "opened" so far.
+    """
+    opened: list[str] = []
+    threads: list[threading.Thread] = []
+
+    def open_url(url: str, *args: object, **kwargs: object) -> bool:
+        opened.append(url)
+
+        def approve() -> None:
+            # The loopback server that receives the redirect starts a moment later.
+            for _ in range(100):
+                try:
+                    httpx2.get(url, follow_redirects=True, timeout=5)
+                    return
+                except httpx2.HTTPError:
+                    time.sleep(0.1)
+
+        thread = threading.Thread(target=approve, daemon=True)
+        thread.start()
+        threads.append(thread)
+        return True
+
+    monkeypatch.setattr(webbrowser, "open", open_url)
+    yield opened
+    for thread in threads:
+        thread.join(timeout=10)
+
+
+@pytest.fixture
+def idle_browser(monkeypatch: pytest.MonkeyPatch):
+    """A web browser that opens but where nobody ever signs in."""
+    opened: list[str] = []
+    monkeypatch.setattr(
+        webbrowser, "open", lambda url, *args, **kwargs: opened.append(url) or True
+    )
+    return opened
 

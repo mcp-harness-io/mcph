@@ -114,7 +114,7 @@ def test_the_token_never_shows_up_when_the_connection_fails(
     assert SECRET not in result.output
 
 
-def test_without_auth_the_message_suggests_sending_a_token(project, start_http_server):
+def test_without_auth_the_message_suggests_adding_auth(project, start_http_server):
     url = start_http_server(auth=1)
     project.write_config(project.http_entry("docs", url))
 
@@ -123,5 +123,5 @@ def test_without_auth_the_message_suggests_sending_a_token(project, start_http_s
     assert result.exit_code == 1, result.output
     assert (
         "authentication required: the server answered 401 "
-        "(send a bearer token with `auth` in mcph.yaml)"
+        "(add `auth` to this server in mcph.yaml)"
     ) in result.output

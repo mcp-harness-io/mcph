@@ -27,7 +27,9 @@ CONFIG_VERSION = "1"
 
 _SERVER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SCOPE_RE = re.compile(r"[\x21-\x7e]+")  # visible ASCII, no spaces (RFC 6749)
 _TRANSPORTS = ("stdio", "http")
+_AUTH_TYPES = ("bearer", "oauth")
 
 
 class ConfigError(Exception):
@@ -84,12 +86,40 @@ class BearerAuthConfig(_StrictModel):
         return value
 
 
+class OAuthAuthConfig(_StrictModel):
+    """Sign in through the browser with ``mcph auth login`` and use the stored token."""
+
+    type: Literal["oauth"]
+    scopes: list[str] = Field(default_factory=list)
+    ignore_issuer_trailing_slash: bool = False
+    """Accept a server whose metadata announces its authorization server as
+    ``https://host/`` while that server's own metadata says ``https://host``.
+
+    The standard (RFC 8414) wants the two to be identical, so this is off by
+    default; it tolerates that one difference and nothing else."""
+
+    @field_validator("scopes")
+    @classmethod
+    def _check_scopes(cls, scopes: list[str]) -> list[str]:
+        for scope in scopes:
+            if not _SCOPE_RE.fullmatch(scope):
+                raise ValueError(
+                    f"each scope must be a non-empty word without spaces, got {scope!r}"
+                )
+        return scopes
+
+
+AuthConfig = Annotated[
+    BearerAuthConfig | OAuthAuthConfig, Field(discriminator="type")
+]
+
+
 class HttpServerConfig(_ServerBase):
     """A server that is already running and speaks Streamable HTTP."""
 
     transport: Literal["http"]
     url: str
-    auth: BearerAuthConfig | None = None
+    auth: AuthConfig | None = None
 
     @field_validator("url")
     @classmethod
@@ -207,25 +237,32 @@ def _validation_detail(path: Path, exc: ValidationError) -> str:
     for error in exc.errors():
         loc = _without_union_tag(error["loc"])
         message = error["msg"].removeprefix("Value error, ")
-        if error["type"] == "union_tag_not_found":
-            loc, message = (*loc, "transport"), "Field required (stdio or http)"
-        elif error["type"] == "union_tag_invalid":
-            loc, message = (*loc, "transport"), "Input should be 'stdio' or 'http'"
+        if error["type"] in ("union_tag_not_found", "union_tag_invalid"):
+            # The union's discriminator is the transport, or the auth type.
+            if loc[-1:] == ("auth",):
+                key, choices = "type", _AUTH_TYPES
+            else:
+                key, choices = "transport", _TRANSPORTS
+            loc = (*loc, key)
+            if error["type"] == "union_tag_not_found":
+                message = f"Field required ({' or '.join(choices)})"
+            else:
+                message = "Input should be " + " or ".join(repr(c) for c in choices)
         where = _format_loc(loc)
         lines.append(f"  {where}: {message}" if where else f"  {message}")
     return "\n".join(lines)
 
 
 def _without_union_tag(loc: tuple[int | str, ...]) -> tuple[int | str, ...]:
-    # For errors inside a server entry pydantic inserts the matched transport
-    # ("stdio" or "http") after the list index; that is not a key in the YAML.
-    if (
-        len(loc) > 2
-        and loc[0] == "servers"
-        and isinstance(loc[1], int)
-        and loc[2] in _TRANSPORTS
-    ):
-        return loc[:2] + loc[3:]
+    # For errors inside a server entry (or its ``auth``) pydantic inserts the
+    # matched variant ("stdio", "http", "bearer", "oauth"); that is not a key in
+    # the YAML.
+    if not (len(loc) > 2 and loc[0] == "servers" and isinstance(loc[1], int)):
+        return loc
+    if loc[2] in _TRANSPORTS:
+        loc = loc[:2] + loc[3:]
+    if len(loc) > 3 and loc[2] == "auth" and loc[3] in _AUTH_TYPES:
+        loc = loc[:3] + loc[4:]
     return loc
 
 
